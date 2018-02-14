@@ -656,7 +656,7 @@ c *** CAfactor=1.2d0 gives 20% calibration error (on the safe side) ***
 c **** HERE YOU CAN ADD CUSTOM REQUIREMENTS FOR OUTPUTS ****
 c                           if ((od_p.gt.0.0d0).and.
 c     &                          (od_p.lt.40.0d0)) then
-                           if (GRVS.lt.16.2d0) then
+cccc                           if (GRVS.lt.16.2d0) then
                            lo_p=(lo_p*180.0d0)/M_PI
                            bo_p=(bo_p*180.0d0)/M_PI
 c                           if (lo_p.gt.175.0d0) then
@@ -699,7 +699,7 @@ c *** Binary ***
      &                             ,ugen,bgen,rgen,jgen,hgen,kgen
      &                             ,Ue,Ve,We
                               endif
-                           endif
+cccc                           endif
                            if (error.ge.2) then
 c                              if (od_p.gt.0.0d0) then
 c                                 if (od_p.lt.4.5d0) then
