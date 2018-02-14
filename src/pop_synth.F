@@ -64,19 +64,22 @@ c *** USER OPTIONS ***
 c *** Output to binary (1) or ASCII (0)? ***
       Binary=0
 c *** Minimum magnitude necessary ***
-      ChosenLim=11.0d0
+c$$$      ChosenLim=11.0d0
+      ChosenLim=20.0d0
       write(6,*) 'Limited to V<',ChosenLim
 c *** Add Gaia errors? 
 c *** 0=No errors
 c *** 1=Gaia - Use 'Months' to set intermediate data releases
 c *** 2=TGAS Tycho stars
 c *** 3=TGAS Hipparcos stars only
-      error=1
+      error=0
+c$$$      error=1
 c *** mission length in months, 60=5 years ***
 c *** 22 months for Gaia DR2 (testing ongoing) ***
       month=60.0d0
 c *** Add Milky Way Extinction (1=yes) ***
-      EXTINCT=1
+      EXTINCT=0
+c$$$      EXTINCT=1
 c *** Extintion map (1=Schlegel, 0=2d analytic) ***
       Schlegel=1
 c *** Choose IMF (Salpeter=1, Kroupa=2) ***
