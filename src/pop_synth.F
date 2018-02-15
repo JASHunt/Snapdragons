@@ -65,10 +65,8 @@ c *** Output to binary (1) or ASCII (0)? ***
       Binary=0
 c *** Minimum magnitude necessary ***
 c$$$      ChosenLim=11.0d0
-c$$$      ChosenLim=20.0d0
-c$$$      ChosenLim=31.5d0
-c$$$      ChosenLim=32.d0
-      ChosenLim=1000.0d0
+      ChosenLim=20.0d0
+c$$$      ChosenLim=1000.0d0
       write(6,*) 'Limited to V<',ChosenLim
 c *** Add Gaia errors? 
 c *** 0=No errors
