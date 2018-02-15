@@ -167,7 +167,6 @@ c     -pi/2<b<pi/2, with +pi/2 for +ve
       endif
 c *** Define SSP data ***
       Msmin=0.1d0
-c$$$      Msmin=0.15d0   ! consistent with isochrone files
 c *** Read in (Padova) Isochrone Files ***   
       j=0
       k=1
@@ -416,13 +415,9 @@ c *** End Extinction ***
                if (dble(IsoNo(i))-z.lt.z-dble(IsoNo(i-1))) then
                   lbegin=jindex(181*(i)+ageindex)
                   lend=jindex(181*(i)+ageindex+1)-1
-c$$$                  lbegin=jindex(181*(i)+ageindex)+1
-c$$$                  lend=jindex(181*(i)+ageindex+1)
                else
                   lbegin=jindex(181*(i-1)+ageindex)
                   lend=jindex(181*(i-1)+ageindex+1)-1
-c$$$                  lbegin=jindex(181*(i-1)+ageindex)+1
-c$$$                  lend=jindex(181*(i-1)+ageindex+1)
                endif
                do l=lbegin,lend
 c *** Calc MiMax ***
@@ -440,20 +435,16 @@ c *** Calc A ***
 c           Afac3=-m_p*0.35d0/(MiMax**(-0.35d0)-Msmin**(-0.35d0))
                endif
 c *** Calc Milb ***
-c$$$               Milb=10.0d0**12.0d0
                Milb=Mi(lbegin)
                mag=VMV(lbegin)+dmod+ex31
                if (mag.lt.ChosenLim) goto 667
-c$$$               do l=lbegin,lend
-c$$$                  mag=VMV(l)+dmod+ex31
-c$$$                  mag2=VMV(l-1)+dmod+ex31
                do l=lbegin,lend-1
                   mag=VMV(l)+dmod+ex31
                   mag2=VMV(l+1)+dmod+ex31
-                  if (mag.lt.ChosenLim) then
-                     frac=(ChosenLim-mag2)/(mag-mag2)
-                     Milb=(Mi(l)-Mi(l-1))*frac+Mi(l-1)
-c$$$                     write(6,*) 'Milb: ', Milb
+                  if (mag2.lt.ChosenLim) then
+                     frac=(ChosenLim-mag)/(mag2-mag)
+                     Milb=(Mi(l+1)-Mi(l))*frac+Mi(l)
+c                     write(6,*) Milb
                      goto 667
 c *** Interpolate ***
                   endif
@@ -537,18 +528,6 @@ c *** Calculate stellar mass ***
                         endif                     
                      endif
                   endif
-c$$$                  do l=lbegin,lend
-c$$$                     if (mgen.lt.Mi(l)) then
-c$$$c *** Interpolate for magnitudes ***
-c$$$                        frac=(mgen-Mi(l-1))/(Mi(l)-Mi(l-1))
-c$$$                        avgen=frac*(VMV(l)-VMV(l-1))+VMV(l-1)
-c$$$                        aigen=frac*(VMI(l)-VMI(l-1))+VMI(l-1)
-c$$$                        augen=frac*(VMU(l)-VMU(l-1))+VMU(l-1)
-c$$$                        abgen=frac*(VMB(l)-VMB(l-1))+VMB(l-1)
-c$$$                        argen=frac*(VMR(l)-VMR(l-1))+VMR(l-1)
-c$$$                        ajgen=frac*(VMJ(l)-VMJ(l-1))+VMJ(l-1)
-c$$$                        ahgen=frac*(VMH(l)-VMH(l-1))+VMH(l-1)
-c$$$                        akgen=frac*(VMK(l)-VMK(l-1))+VMK(l-1)
                   do l=lbegin,lend-1
                      if (mgen.lt.Mi(l+1)) then
 c *** Interpolate for magnitudes ***
