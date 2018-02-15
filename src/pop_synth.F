@@ -65,25 +65,30 @@ c *** Output to binary (1) or ASCII (0)? ***
       Binary=0
 c *** Minimum magnitude necessary ***
 c$$$      ChosenLim=11.0d0
-      ChosenLim=20.0d0
+c$$$      ChosenLim=20.0d0
+c$$$      ChosenLim=31.5d0
+c$$$      ChosenLim=32.d0
+      ChosenLim=1000.0d0
       write(6,*) 'Limited to V<',ChosenLim
 c *** Add Gaia errors? 
 c *** 0=No errors
 c *** 1=Gaia - Use 'Months' to set intermediate data releases
 c *** 2=TGAS Tycho stars
 c *** 3=TGAS Hipparcos stars only
-      error=0
-c$$$      error=1
+c$$$      error=0
+      error=1
 c *** mission length in months, 60=5 years ***
 c *** 22 months for Gaia DR2 (testing ongoing) ***
-      month=60.0d0
+      month=22.0d0
+c$$$      month=60.0d0
 c *** Add Milky Way Extinction (1=yes) ***
       EXTINCT=0
 c$$$      EXTINCT=1
 c *** Extintion map (1=Schlegel, 0=2d analytic) ***
       Schlegel=1
 c *** Choose IMF (Salpeter=1, Kroupa=2) ***
-      xIMF=2
+      xIMF=1
+c$$$      xIMF=2
 c *** Random seed ***
       idum=-1314
 c *** Set Sun position / velocity ***
@@ -163,7 +168,8 @@ c     -pi/2<b<pi/2, with +pi/2 for +ve
          write(6,*) '*** No Extinction Added ***'
       endif
 c *** Define SSP data ***
-      Msmin=0.1d0
+c$$$      Msmin=0.1d0
+      Msmin=0.15d0   ! consistent with isochrone files
 c *** Read in (Padova) Isochrone Files ***   
       j=0
       k=1
@@ -412,9 +418,13 @@ c *** End Extinction ***
                if (dble(IsoNo(i))-z.lt.z-dble(IsoNo(i-1))) then
                   lbegin=jindex(181*(i)+ageindex)
                   lend=jindex(181*(i)+ageindex+1)-1
+c$$$                  lbegin=jindex(181*(i)+ageindex)+1
+c$$$                  lend=jindex(181*(i)+ageindex+1)
                else
                   lbegin=jindex(181*(i-1)+ageindex)
                   lend=jindex(181*(i-1)+ageindex+1)-1
+c$$$                  lbegin=jindex(181*(i-1)+ageindex)+1
+c$$$                  lend=jindex(181*(i-1)+ageindex+1)
                endif
                do l=lbegin,lend
 c *** Calc MiMax ***
@@ -432,18 +442,25 @@ c *** Calc A ***
 c           Afac3=-m_p*0.35d0/(MiMax**(-0.35d0)-Msmin**(-0.35d0))
                endif
 c *** Calc Milb ***
-               Milb=10.0d0**12.0d0
-               do l=lbegin,lend
+c$$$               Milb=10.0d0**12.0d0
+               Milb=Mi(lbegin)
+               mag=VMV(lbegin)+dmod+ex31
+               if (mag.lt.ChosenLim) goto 667
+c$$$               do l=lbegin,lend
+c$$$                  mag=VMV(l)+dmod+ex31
+c$$$                  mag2=VMV(l-1)+dmod+ex31
+               do l=lbegin,lend-1
                   mag=VMV(l)+dmod+ex31
-                  mag2=VMV(l-1)+dmod+ex31
+                  mag2=VMV(l+1)+dmod+ex31
                   if (mag.lt.ChosenLim) then
                      frac=(ChosenLim-mag2)/(mag-mag2)
                      Milb=(Mi(l)-Mi(l-1))*frac+Mi(l-1)
-c                     write(6,*) Milb
+c$$$                     write(6,*) 'Milb: ', Milb
                      goto 667
 c *** Interpolate ***
                   endif
                enddo
+               Milb=Mi(lend)
 c *** CHANGED ***
 c               goto 601
 c *** Calc number to generate ***
@@ -522,18 +539,30 @@ c *** Calculate stellar mass ***
                         endif                     
                      endif
                   endif
-                  do l=lbegin,lend
-                     if (mgen.lt.Mi(l)) then
+c$$$                  do l=lbegin,lend
+c$$$                     if (mgen.lt.Mi(l)) then
+c$$$c *** Interpolate for magnitudes ***
+c$$$                        frac=(mgen-Mi(l-1))/(Mi(l)-Mi(l-1))
+c$$$                        avgen=frac*(VMV(l)-VMV(l-1))+VMV(l-1)
+c$$$                        aigen=frac*(VMI(l)-VMI(l-1))+VMI(l-1)
+c$$$                        augen=frac*(VMU(l)-VMU(l-1))+VMU(l-1)
+c$$$                        abgen=frac*(VMB(l)-VMB(l-1))+VMB(l-1)
+c$$$                        argen=frac*(VMR(l)-VMR(l-1))+VMR(l-1)
+c$$$                        ajgen=frac*(VMJ(l)-VMJ(l-1))+VMJ(l-1)
+c$$$                        ahgen=frac*(VMH(l)-VMH(l-1))+VMH(l-1)
+c$$$                        akgen=frac*(VMK(l)-VMK(l-1))+VMK(l-1)
+                  do l=lbegin,lend-1
+                     if (mgen.lt.Mi(l+1)) then
 c *** Interpolate for magnitudes ***
-                        frac=(mgen-Mi(l-1))/(Mi(l)-Mi(l-1))
-                        avgen=frac*(VMV(l)-VMV(l-1))+VMV(l-1)
-                        aigen=frac*(VMI(l)-VMI(l-1))+VMI(l-1)
-                        augen=frac*(VMU(l)-VMU(l-1))+VMU(l-1)
-                        abgen=frac*(VMB(l)-VMB(l-1))+VMB(l-1)
-                        argen=frac*(VMR(l)-VMR(l-1))+VMR(l-1)
-                        ajgen=frac*(VMJ(l)-VMJ(l-1))+VMJ(l-1)
-                        ahgen=frac*(VMH(l)-VMH(l-1))+VMH(l-1)
-                        akgen=frac*(VMK(l)-VMK(l-1))+VMK(l-1)
+                        frac=(mgen-Mi(l))/(Mi(l+1)-Mi(l))
+                        avgen=frac*(VMV(l+1)-VMV(l))+VMV(l)
+                        aigen=frac*(VMI(l+1)-VMI(l))+VMI(l)
+                        augen=frac*(VMU(l+1)-VMU(l))+VMU(l)
+                        abgen=frac*(VMB(l+1)-VMB(l))+VMB(l)
+                        argen=frac*(VMR(l+1)-VMR(l))+VMR(l)
+                        ajgen=frac*(VMJ(l+1)-VMJ(l))+VMJ(l)
+                        ahgen=frac*(VMH(l+1)-VMH(l))+VMH(l)
+                        akgen=frac*(VMK(l+1)-VMK(l))+VMK(l)
 c *** Add stellar extinction (and absolute -> apparent) ***
                         vgen=avgen+dmod+ex31
 c *** If satisfies criteria *** 
