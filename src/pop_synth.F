@@ -64,23 +64,29 @@ c *** USER OPTIONS ***
 c *** Output to binary (1) or ASCII (0)? ***
       Binary=0
 c *** Minimum magnitude necessary ***
-      ChosenLim=11.0d0
+c$$$      ChosenLim=11.0d0
+      ChosenLim=20.0d0
+c$$$      ChosenLim=1000.0d0
       write(6,*) 'Limited to V<',ChosenLim
 c *** Add Gaia errors? 
 c *** 0=No errors
 c *** 1=Gaia - Use 'Months' to set intermediate data releases
 c *** 2=TGAS Tycho stars
 c *** 3=TGAS Hipparcos stars only
+c$$$      error=0
       error=1
 c *** mission length in months, 60=5 years ***
 c *** 22 months for Gaia DR2 (testing ongoing) ***
-      month=60.0d0
+      month=22.0d0
+c$$$      month=60.0d0
 c *** Add Milky Way Extinction (1=yes) ***
-      EXTINCT=1
+      EXTINCT=0
+c$$$      EXTINCT=1
 c *** Extintion map (1=Schlegel, 0=2d analytic) ***
       Schlegel=1
 c *** Choose IMF (Salpeter=1, Kroupa=2) ***
-      xIMF=2
+      xIMF=1
+c$$$      xIMF=2
 c *** Random seed ***
       idum=-1314
 c *** Set Sun position / velocity ***
@@ -429,18 +435,21 @@ c *** Calc A ***
 c           Afac3=-m_p*0.35d0/(MiMax**(-0.35d0)-Msmin**(-0.35d0))
                endif
 c *** Calc Milb ***
-               Milb=10.0d0**12.0d0
-               do l=lbegin,lend
+               Milb=Mi(lbegin)
+               mag=VMV(lbegin)+dmod+ex31
+               if (mag.lt.ChosenLim) goto 667
+               do l=lbegin,lend-1
                   mag=VMV(l)+dmod+ex31
-                  mag2=VMV(l-1)+dmod+ex31
-                  if (mag.lt.ChosenLim) then
-                     frac=(ChosenLim-mag2)/(mag-mag2)
-                     Milb=(Mi(l)-Mi(l-1))*frac+Mi(l-1)
+                  mag2=VMV(l+1)+dmod+ex31
+                  if (mag2.lt.ChosenLim) then
+                     frac=(ChosenLim-mag)/(mag2-mag)
+                     Milb=(Mi(l+1)-Mi(l))*frac+Mi(l)
 c                     write(6,*) Milb
                      goto 667
 c *** Interpolate ***
                   endif
                enddo
+               Milb=Mi(lend)
 c *** CHANGED ***
 c               goto 601
 c *** Calc number to generate ***
@@ -519,18 +528,18 @@ c *** Calculate stellar mass ***
                         endif                     
                      endif
                   endif
-                  do l=lbegin,lend
-                     if (mgen.lt.Mi(l)) then
+                  do l=lbegin,lend-1
+                     if (mgen.lt.Mi(l+1)) then
 c *** Interpolate for magnitudes ***
-                        frac=(mgen-Mi(l-1))/(Mi(l)-Mi(l-1))
-                        avgen=frac*(VMV(l)-VMV(l-1))+VMV(l-1)
-                        aigen=frac*(VMI(l)-VMI(l-1))+VMI(l-1)
-                        augen=frac*(VMU(l)-VMU(l-1))+VMU(l-1)
-                        abgen=frac*(VMB(l)-VMB(l-1))+VMB(l-1)
-                        argen=frac*(VMR(l)-VMR(l-1))+VMR(l-1)
-                        ajgen=frac*(VMJ(l)-VMJ(l-1))+VMJ(l-1)
-                        ahgen=frac*(VMH(l)-VMH(l-1))+VMH(l-1)
-                        akgen=frac*(VMK(l)-VMK(l-1))+VMK(l-1)
+                        frac=(mgen-Mi(l))/(Mi(l+1)-Mi(l))
+                        avgen=frac*(VMV(l+1)-VMV(l))+VMV(l)
+                        aigen=frac*(VMI(l+1)-VMI(l))+VMI(l)
+                        augen=frac*(VMU(l+1)-VMU(l))+VMU(l)
+                        abgen=frac*(VMB(l+1)-VMB(l))+VMB(l)
+                        argen=frac*(VMR(l+1)-VMR(l))+VMR(l)
+                        ajgen=frac*(VMJ(l+1)-VMJ(l))+VMJ(l)
+                        ahgen=frac*(VMH(l+1)-VMH(l))+VMH(l)
+                        akgen=frac*(VMK(l+1)-VMK(l))+VMK(l)
 c *** Add stellar extinction (and absolute -> apparent) ***
                         vgen=avgen+dmod+ex31
 c *** If satisfies criteria *** 
@@ -653,7 +662,7 @@ c *** CAfactor=1.2d0 gives 20% calibration error (on the safe side) ***
 c **** HERE YOU CAN ADD CUSTOM REQUIREMENTS FOR OUTPUTS ****
 c                           if ((od_p.gt.0.0d0).and.
 c     &                          (od_p.lt.40.0d0)) then
-                           if (GRVS.lt.16.2d0) then
+cccc                           if (GRVS.lt.16.2d0) then
                            lo_p=(lo_p*180.0d0)/M_PI
                            bo_p=(bo_p*180.0d0)/M_PI
 c                           if (lo_p.gt.175.0d0) then
@@ -696,7 +705,7 @@ c *** Binary ***
      &                             ,ugen,bgen,rgen,jgen,hgen,kgen
      &                             ,Ue,Ve,We
                               endif
-                           endif
+cccc                           endif
                            if (error.ge.2) then
 c                              if (od_p.gt.0.0d0) then
 c                                 if (od_p.lt.4.5d0) then
