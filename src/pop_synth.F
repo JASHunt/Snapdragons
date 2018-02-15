@@ -168,8 +168,8 @@ c     -pi/2<b<pi/2, with +pi/2 for +ve
          write(6,*) '*** No Extinction Added ***'
       endif
 c *** Define SSP data ***
-c$$$      Msmin=0.1d0
-      Msmin=0.15d0   ! consistent with isochrone files
+      Msmin=0.1d0
+c$$$      Msmin=0.15d0   ! consistent with isochrone files
 c *** Read in (Padova) Isochrone Files ***   
       j=0
       k=1
