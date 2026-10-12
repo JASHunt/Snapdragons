@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snapdragons"
+version = "2.0.0"
+description = "Stellar population synthesis from galaxy simulations to mock Gaia catalogues"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    {name = "J. A. S. Hunt", email = "j.a.hunt@surrey.ac.uk"},
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.7",
+    "astropy>=5.0",
+    "pandas>=1.4",
+    "pynbody>=1.0",
+    "h5py>=3.0",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+isochrones = ["ezpadova>=2.0"]
+errors = ["pygaia>=3.0"]
+dust = ["mwdust>=1.0"]
+plots = ["matplotlib>=3.5"]
+all = ["snapdragons[isochrones,errors,dust,plots]"]
+
+[project.scripts]
+snapdragons = "snapdragons.pipeline:main"
+
+[tool.setuptools.packages.find]
+include = ["snapdragons*"]

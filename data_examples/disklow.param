@@ -1,0 +1,109 @@
+# Run and output
+achInFile                = PMR6.tipsy
+achOutName               = output/AMNH
+bParaRead                = 1
+bParaWrite               = 0
+bStandard                = 1
+bVDetails                = 1
+bDoGas                   = 1
+iCheckInterval           = 50
+iLogInterval             = 1
+iOutInterval             = 1
+nIOProcessor             = 14
+nSteps                   = 1
+#
+############### What arrays to write
+iBinaryOutput         = 1 #Format of the extra array files output by PKDGRAV
+bDoIOrderOutput       = 1 #writes .iord, .igasorder, .rhoform, .Tform
+bDoDensity            = 1
+bDoCSound             = 1
+bDohOutput            = 1
+
+## Timesteps
+# 1 Myr timesteps
+dDelta                   = 0.000000006708108
+dDumpFrameStep           = 1
+dEta                     = 0.185
+dEtaCourant              = 0.4
+iMaxRung                 = 10
+bKDK                     = 1
+# Tree
+dTheta                   = 0.7
+## Performance Options
+nTruncateRung = 128
+dExtraStore = 0.1
+dFracNoDomainDecomp = 0.1
+
+### Gas Options
+bGasCooling           = 1
+# bGasAdiabatic           = 1
+dMeanMolWeight          = 0.59259
+nSmooth			 = 64
+dKpcUnit                 = 1
+dMsolUnit                = 1e9
+dThermalDiffusionCoeff   = 0.03
+dMetalDiffusionCoeff     = 0.01
+#
+# SPH Options
+bViscosityLimiter        = 1
+bViscosityLimitdt        = 1
+dhMinOverSoft		 = 0.143
+bFastGas                 = 1
+dFracFastGas             = 0.1
+#
+# Forces
+# "plummer equivalent" of dx with dx = 80 pc.
+#dSoft                    = 0.112
+dSoft                    = 0.02
+# dResolveJeans            = 3.0
+# From AGORA readme: Njeans**4/gamma/pi; where NJeans = 4
+dResolveJeans            = 3.06
+
+# Star formation
+dPhysDenMin              = 10
+dInitStarMass            = 0.000001
+dMinGasMass              = 0.0000005
+dCStar                   = 0.1
+dTempMax                 = 1e3
+bStarForm                = 1
+achIMF = Kroupa01
+
+# Feedback
+bFeedBack = 1
+dESN = 1.0e51
+bAGORAFeedback = 0
+
+######BH Parameters############################
+#iOrbitOutInterval     = 1            #Number of timsteps between orbit outputs
+#bDoSinks              = 0            #Enable sinks
+#bBHSink               = 0            #Bondi-Hoyle type sink
+#dBHSinkEddEff         = 0.1         #BHSink Eddington Efficiency
+#dBHSinkFeedbackEff = 0.02        #BHSink Feedback Efficiency
+#dBHSinkAlpha          = 1.            #BHSink Alpha
+#bBHMindv              = 1            #Enable use of mindeltav for BH accretion
+#dBHFormDen            = 3.0
+# dBHFormTemp           = 9500
+# dBHFormMaxZ           = 3e-4
+#dBHFormProb           = -1          #Seed BH formation probability
+#bBHForm               = 1            #Enable seed BH formation
+#bDoBHKick             = 0            #Turn on grav recoil for mergers
+#bBHAccreteAll         = 1
+#dInitBHMass           = 0.0000005  #RES  Inital BH mass = gas particle mass 10^5
+
+# Speed from Claire file
+nBucket = 64
+nTreePieces = 16384
+bUseCkLoopPar = 1
+
+# bBHForm: 0
+# dBHFormProb: 0
+# dInitBHMass: 0
+# bBHSink: 0
+# bSmallBHSmooth: 0
+# bBHTurnOffCooling: 0
+# bDoBHKick: 0
+# dBHSinkEddEff: 0.1
+# dBHSinkFeedbackEff: 0.05
+# dBHSinkAlpha: 1
+# bBHMindv: 0
+# bBHAccreteAll: 1

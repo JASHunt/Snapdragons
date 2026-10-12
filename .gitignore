@@ -1,0 +1,19 @@
+# Pipeline outputs (tens of GB of HDF5 + plots)
+output/
+
+# Simulation snapshots and generated param symlink
+data_examples/AMNH.010000
+data_examples/AMNH.param
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Editor / OS / session cruft
+*~
+.DS_Store
+wget-log
+.claude/
