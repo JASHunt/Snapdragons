@@ -20,6 +20,7 @@ R_V = 3.1 by default:
     A_G / A_V   ≈ 0.789
     A_BP / A_V  ≈ 1.002
     A_RP / A_V  ≈ 0.589
+    A_RVS / A_V ≈ 0.589  (G_RVS sits inside the RP band; taken equal to A_RP)
     A_V / E(B-V) = R_V = 3.1
 """
 
@@ -28,9 +29,10 @@ from scipy.spatial import cKDTree
 
 
 EXTINCTION_COEFFS = {
-    "Gmag":    0.789,
-    "G_BPmag": 1.002,
-    "G_RPmag": 0.589,
+    "Gmag":     0.789,
+    "G_BPmag":  1.002,
+    "G_RPmag":  0.589,
+    "G_RVSmag": 0.589,
 }
 
 

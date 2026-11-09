@@ -74,7 +74,7 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
 
     true["dist"] = dist
 
-    for band in ["Gmag", "G_BPmag", "G_RPmag"]:
+    for band in ["Gmag", "G_BPmag", "G_RPmag", "G_RVSmag"]:
         if f"{band}_app" in raw_cat:
             true[f"{band}_app"] = raw_cat[f"{band}_app"]
         if band in raw_cat:
@@ -86,15 +86,22 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
     for band, coeff in EXTINCTION_COEFFS.items():
         true[f"A_{band}"] = coeff * a_v
 
+    # Faint limit in the configured band, bright limit in G.  The synthesis
+    # already applied both before smoothing; after smoothing the distance
+    # moduli have changed slightly, so re-apply here.
+    lim_col = f"{config.limit_band_column}_app"
     mag_mask = np.ones(len(dist), dtype=bool)
-    if "Gmag_app" in true:
-        mag_mask &= (true["Gmag_app"] <= config.mag_limit)
-        mag_mask &= (true["Gmag_app"] >= config.mag_bright_limit)
+    with np.errstate(invalid="ignore"):
+        if lim_col in true:
+            mag_mask &= np.isfinite(true[lim_col])
+            mag_mask &= (true[lim_col] <= config.mag_limit)
+        if "Gmag_app" in true:
+            mag_mask &= (true["Gmag_app"] >= config.mag_bright_limit)
 
     n_before = len(dist)
     n_after = np.sum(mag_mask)
     print(f"  Magnitude cut: {n_before:,} → {n_after:,} stars "
-          f"(G < {config.mag_limit})")
+          f"({config.mag_limit_band} < {config.mag_limit})")
 
     true = {k: v[mag_mask] if isinstance(v, np.ndarray) else v
             for k, v in true.items()}
@@ -107,6 +114,10 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
             stellar[key] = arr[mag_mask] if isinstance(arr, np.ndarray) else arr
 
     catalogue = {"true": true, "stellar": stellar}
+
+    if config.selection_function != "none":
+        catalogue = apply_selection_function(
+            catalogue, config, rng, star_pos=raw_cat["pos"][mag_mask])
 
     if config.apply_errors and error_model is not None:
         catalogue = error_model.apply_errors(catalogue, rng=rng)
@@ -134,6 +145,80 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
     return catalogue
 
 
+def apply_selection_function(catalogue, config, rng, star_pos=None):
+    """Thin the catalogue with the Gaia DR3 RVS selection function.
+
+    Uses gaiaunlimited's ``DR3RVSSelectionFunction`` (Castro-Ginard et al.
+    2023): P(has RV | HEALPix 32 pixel, G, G - G_RP).  Each star is kept
+    with that probability (Bernoulli draw).  Sky cells and colour-magnitude
+    bins without data give P = 0.
+
+    ``config.sf_mag_shift`` is subtracted from G before the query, so that
+    the DR3 function evaluated at G - 2.5 stands in for the unpublished DR4
+    one (same sky pattern, limit shifted with the depth).
+
+    Needs l, b (taken from the catalogue if present, else computed from
+    ``star_pos`` and the observer position), apparent G and G_RP.
+    """
+    try:
+        from gaiaunlimited.selectionfunctions import DR3RVSSelectionFunction
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+    except ImportError:
+        raise ImportError(
+            "selection_function='dr3_rvs' needs gaiaunlimited: "
+            "pip install gaiaunlimited"
+        )
+
+    true = catalogue["true"]
+    gmag = true.get("Gmag_app")
+    rpmag = true.get("G_RPmag_app")
+    if gmag is None or rpmag is None:
+        raise ValueError("Selection function needs apparent G and G_RP.")
+    n = len(gmag)
+    if n == 0:
+        return catalogue
+
+    if "l" in true and "b" in true:
+        l_deg, b_deg = true["l"], true["b"]
+    else:
+        if star_pos is None:
+            raise ValueError("Selection function needs l, b or star_pos.")
+        from .coordinates import cartesian_to_galactic
+        rel = star_pos - np.asarray(config.observer_position)
+        gal = cartesian_to_galactic(rel[:, 0], rel[:, 1], rel[:, 2])
+        l_deg, b_deg = gal["l"], gal["b"]
+
+    print(f"  Selection function: DR3 RVS (gaiaunlimited)"
+          + (f", evaluated at G - {config.sf_mag_shift}"
+             if config.sf_mag_shift else ""))
+    sfn = DR3RVSSelectionFunction()
+
+    prob = np.zeros(n)
+    chunk = 500_000
+    for i in range(0, n, chunk):
+        sl = slice(i, min(i + chunk, n))
+        coords = SkyCoord(l=l_deg[sl] * u.deg, b=b_deg[sl] * u.deg,
+                          frame="galactic")
+        p = sfn.query(coords, g=gmag[sl] - config.sf_mag_shift,
+                      c=gmag[sl] - rpmag[sl])
+        prob[sl] = np.nan_to_num(np.asarray(p, dtype=np.float64), nan=0.0)
+
+    keep = rng.uniform(size=n) < prob
+    n_keep = int(np.sum(keep))
+    print(f"  Selection function: {n:,} → {n_keep:,} stars "
+          f"(mean P = {np.mean(prob):.3f})")
+
+    catalogue["true"] = {k: v[keep] if isinstance(v, np.ndarray) and len(v) == n
+                         else v for k, v in true.items()}
+    if "stellar" in catalogue:
+        catalogue["stellar"] = {
+            k: v[keep] if isinstance(v, np.ndarray) and len(v) == n else v
+            for k, v in catalogue["stellar"].items()}
+    catalogue["true"]["p_selection"] = prob[keep]
+    return catalogue
+
+
 def write_hdf5(catalogue, filepath, config):
     """Write catalogue to HDF5."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
@@ -151,6 +236,9 @@ def write_hdf5(catalogue, filepath, config):
         meta = hf.create_group("metadata")
         meta.attrs["gaia_release"] = config.gaia_release
         meta.attrs["mag_limit"] = config.mag_limit
+        meta.attrs["mag_limit_band"] = config.mag_limit_band
+        meta.attrs["selection_function"] = config.selection_function
+        meta.attrs["sf_mag_shift"] = config.sf_mag_shift
         meta.attrs["imf"] = config.imf
         meta.attrs["extinction_mode"] = config.extinction_mode
         meta.attrs["observer_position"] = list(config.observer_position)

@@ -16,6 +16,7 @@ from tqdm import tqdm
 from .imf import get_imf
 from .coordinates import cartesian_to_galactic
 from .extinction import EXTINCTION_COEFFS
+from .photometry import grvs_from_g_rp
 
 
 def _vectorised_mass_budget(imf, particle_masses, m_min_trunc, m_max,
@@ -202,7 +203,9 @@ def synthesise_population(snapshot, isochrone_grid, config,
         print(f"\n  Population synthesis: {n_particles} star particles")
 
     print(f"  IMF: {imf.name}, mass range [{config.m_min}, {config.m_max}] Msun")
-    print(f"  Magnitude limit: G < {config.mag_limit}")
+    print(f"  Magnitude limit: {config.mag_limit_band} < {config.mag_limit}")
+    lim_col = config.limit_band_column
+    use_grvs = lim_col == "G_RVSmag"
 
     n_use = len(particle_indices)
 
@@ -261,7 +264,10 @@ def synthesise_population(snapshot, isochrone_grid, config,
               f"median A_V={np.median(particle_av):.3f}, "
               f"max={np.max(particle_av):.2f}")
 
-    part_ag = particle_av * EXTINCTION_COEFFS.get("Gmag", 0.789)
+    part_ag = particle_av * EXTINCTION_COEFFS["Gmag"]
+    part_arp = particle_av * EXTINCTION_COEFFS["G_RPmag"]
+    # extinction in the band the faint limit applies to (for the limiting mass)
+    part_alim = particle_av * EXTINCTION_COEFFS[lim_col]
 
     # --- Assign particles to isochrone cells (one batch query) ---
     queries = np.column_stack([part_logage, part_mh]) * isochrone_grid._scale
@@ -291,13 +297,20 @@ def synthesise_population(snapshot, isochrone_grid, config,
         iso = isochrone_grid._grid[key]
         iso_mini = iso["Mini"]
         iso_gmag = iso["Gmag"]
+        if use_grvs:
+            # absolute G_RVS along the isochrone; stars outside the colour
+            # range of the Sartoretti relation have no G_RVS and never pass
+            iso_lim = grvs_from_g_rp(iso_gmag, iso["G_RPmag"])
+            iso_lim = np.where(np.isfinite(iso_lim), iso_lim, np.inf)
+        else:
+            iso_lim = iso_gmag
 
         # Vectorised min_observable_mass via sorted lookup
-        dm_eff = part_dist_mod[cell_particles] + part_ag[cell_particles]
+        dm_eff = part_dist_mod[cell_particles] + part_alim[cell_particles]
         threshold = config.mag_limit - dm_eff
 
-        sorted_order = np.argsort(iso_gmag)
-        sorted_gmag = iso_gmag[sorted_order]
+        sorted_order = np.argsort(iso_lim)
+        sorted_gmag = iso_lim[sorted_order]
         sorted_mini = iso_mini[sorted_order]
         running_min = np.minimum.accumulate(sorted_mini)
 
@@ -413,13 +426,27 @@ def synthesise_population(snapshot, isochrone_grid, config,
             props["q"] = q_arr
             props["Mini_secondary"] = mini_sec
 
-        # Vectorised validity + magnitude cut
+        # Absolute G_RVS (after any binary flux combination)
+        if "Gmag" in props and "G_RPmag" in props:
+            props["G_RVSmag"] = grvs_from_g_rp(props["Gmag"], props["G_RPmag"])
+
+        # Vectorised validity + magnitude cut.  Faint limit in the chosen
+        # band (apparent G_RVS from the extincted apparent G and G_RP);
+        # bright limit always in G.
         g_valid = np.isfinite(
             props.get("Gmag", np.full(len(batch_masses), np.nan)))
         gmag_app = props["Gmag"] + part_dist_mod[batch_pidx] + part_ag[batch_pidx]
-        mag_ok = (g_valid
-                  & (gmag_app <= config.mag_limit)
-                  & (gmag_app >= config.mag_bright_limit))
+        if use_grvs:
+            rp_app = (props["G_RPmag"] + part_dist_mod[batch_pidx]
+                      + part_arp[batch_pidx])
+            lim_app = grvs_from_g_rp(gmag_app, rp_app)
+        else:
+            lim_app = gmag_app
+        with np.errstate(invalid="ignore"):
+            mag_ok = (g_valid
+                      & np.isfinite(lim_app)
+                      & (lim_app <= config.mag_limit)
+                      & (gmag_app >= config.mag_bright_limit))
 
         if np.any(mag_ok):
             n_ok = int(np.sum(mag_ok))
@@ -505,5 +532,11 @@ def synthesise_population(snapshot, isochrone_grid, config,
         if band in catalogue:
             a_band = EXTINCTION_COEFFS.get(band, 0.0) * cat_av
             catalogue[f"{band}_app"] = catalogue[band] + cat_dist_mod + a_band
+
+    # Apparent G_RVS from the extincted G and G_RP (colour-dependent
+    # transformation, so not abs + distance modulus + A_RVS)
+    if "Gmag_app" in catalogue and "G_RPmag_app" in catalogue:
+        catalogue["G_RVSmag_app"] = grvs_from_g_rp(
+            catalogue["Gmag_app"], catalogue["G_RPmag_app"])
 
     return catalogue

@@ -53,9 +53,18 @@ class Config:
 
     # --- Gaia ---
     gaia_release: str = "dr3"    # "dr2", "dr3", "dr4", "dr5"
-    mag_limit: float = 16.0     # G_RVS apparent magnitude limit
-    mag_bright_limit: float = 3.0
+    mag_limit: float = 16.0     # faint limit in the band given by mag_limit_band
+    mag_limit_band: str = "G_RVS"  # "G_RVS" (Sartoretti+ 2023 from G, G_RP) or "G"
+    mag_bright_limit: float = 3.0  # bright limit, always in G
     apply_errors: bool = True
+
+    # RVS selection function (gaiaunlimited, Castro-Ginard+ 2023):
+    #   "none"     -- keep every star brighter than mag_limit
+    #   "dr3_rvs"  -- Bernoulli draw from P(has RV | l, b, G, G - G_RP) of DR3
+    # sf_mag_shift evaluates the DR3 function at G - shift, a stand-in for the
+    # deeper releases; None -> 2.5 for dr4/dr5, 0 otherwise.
+    selection_function: str = "none"
+    sf_mag_shift: Optional[float] = None
 
     # --- Unresolved binaries ---
     unresolved_binaries: bool = False    # combine companion flux into primary
@@ -100,6 +109,21 @@ class Config:
             if c not in valid_coords:
                 raise ValueError(f"Unknown coordinate system '{c}'. "
                                  f"Choose from {valid_coords}")
+        if self.mag_limit_band not in ("G", "G_RVS"):
+            raise ValueError(f"Unknown mag_limit_band '{self.mag_limit_band}'. "
+                             "Choose 'G' or 'G_RVS'")
+        if self.selection_function not in ("none", "dr3_rvs"):
+            raise ValueError(f"Unknown selection_function "
+                             f"'{self.selection_function}'. "
+                             "Choose 'none' or 'dr3_rvs'")
+        if self.sf_mag_shift is None:
+            self.sf_mag_shift = 2.5 if self.gaia_release.lower() in ("dr4", "dr5") \
+                else 0.0
+
+    @property
+    def limit_band_column(self):
+        """Catalogue column that mag_limit applies to ('Gmag' or 'G_RVSmag')."""
+        return "G_RVSmag" if self.mag_limit_band == "G_RVS" else "Gmag"
 
     def _compute_observer_velocity(self):
         """Derive full observer velocity from Solar motion + circular velocity.
@@ -158,7 +182,12 @@ class Config:
             "",
             "  Gaia",
             f"    Data release     : {self.gaia_release.upper()}",
-            f"    Magnitude limit  : G_RVS < {self.mag_limit}",
+            f"    Magnitude limit  : {self.mag_limit_band} < {self.mag_limit}"
+            f"  (G > {self.mag_bright_limit})",
+            f"    Selection fn     : {self.selection_function}"
+            + (f"  (DR3 RVS evaluated at G - {self.sf_mag_shift})"
+               if self.selection_function != "none" and self.sf_mag_shift
+               else ""),
             f"    Apply errors     : {self.apply_errors}",
             "",
             "  Unresolved binaries",

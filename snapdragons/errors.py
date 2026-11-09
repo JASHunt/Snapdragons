@@ -8,6 +8,8 @@ Supported releases: DR2, DR3, DR4, DR5.
 
 import numpy as np
 
+from .photometry import grvs_from_g_rp
+
 GAIA_MAG_BRIGHT = 4.0
 GAIA_MAG_FAINT = 21.0
 
@@ -61,11 +63,15 @@ class GaiaErrorModel:
             return self._pygaia_phot(gmag)
         return self._simple_phot(gmag)
 
-    def radial_velocity_uncertainty(self, gmag, teff=None):
-        """Radial velocity uncertainty in km/s."""
+    def radial_velocity_uncertainty(self, grvs, teff=None, logg=None):
+        """Radial velocity uncertainty in km/s.
+
+        PyGaia's model (Katz et al. 2022) takes G_RVS, T_eff [K] and log g
+        and returns NaN outside its grid: those stars have no Gaia RV.
+        """
         if self._has_pygaia:
-            return self._pygaia_rv(gmag, teff)
-        return self._simple_rv(gmag)
+            return self._pygaia_rv(grvs, teff, logg)
+        return self._simple_rv(grvs)
 
     def apply_errors(self, catalogue, rng=None):
         """Add Gaussian errors to all observables in the catalogue.
@@ -146,15 +152,31 @@ class GaiaErrorModel:
         if "G_RPmag_app" in true:
             obs["G_RPmag"] = true["G_RPmag_app"] + rng.normal(0, rp_err)
 
-        teff = true.get("logTe", None)
-        if teff is not None:
-            teff_linear = 10.0 ** teff
-        else:
-            teff_linear = None
-        rv_err = self.radial_velocity_uncertainty(gmag, teff_linear)
+        # Radial velocity: PyGaia needs G_RVS, T_eff and log g.  T_eff and
+        # log g live in the 'stellar' group; G_RVS in 'true', else derived
+        # from apparent G and G_RP.
+        stellar = catalogue.get("stellar", {})
+        grvs = true.get("G_RVSmag_app")
+        if grvs is None:
+            if "Gmag_app" in true and "G_RPmag_app" in true:
+                grvs = grvs_from_g_rp(true["Gmag_app"], true["G_RPmag_app"])
+            else:
+                print("  Warning: no G_RP available, using G as G_RVS for "
+                      "the RV error model")
+                grvs = gmag
+        teff_linear = 10.0 ** stellar["logTe"] if "logTe" in stellar else None
+        logg = stellar.get("logg")
+        rv_err = self.radial_velocity_uncertainty(grvs, teff_linear, logg)
         unc["rv"] = rv_err
+        n_norv = int(np.sum(~np.isfinite(rv_err)))
+        if n_norv > 0:
+            print(f"  {n_norv:,} / {n:,} stars outside the RV error model "
+                  f"(G_RVS, Teff, logg grid): observed rv set to NaN")
         if "rv" in true:
-            obs["rv"] = true["rv"] + rng.normal(0, np.maximum(rv_err, 1e-10))
+            noise = rng.normal(size=n) * np.where(np.isfinite(rv_err),
+                                                   rv_err, 0.0)
+            obs["rv"] = np.where(np.isfinite(rv_err),
+                                 true["rv"] + noise, np.nan)
 
         if "ra" in true:
             ra_err = plx_err / 1000.0
@@ -206,19 +228,24 @@ class GaiaErrorModel:
             rp_err *= DR2_SCALE["phot"]
         return g_err, bp_err, rp_err
 
-    def _pygaia_rv(self, gmag, teff=None):
-        try:
-            from pygaia.errors.spectroscopic import radial_velocity_uncertainty
-            release = RELEASE_MAP.get(self.release, "dr3")
-            if teff is not None:
-                err = radial_velocity_uncertainty(gmag, teff, release=release)
-            else:
-                err = radial_velocity_uncertainty(
-                    gmag, np.full_like(gmag, 5500.0), release=release
-                )
-            return np.maximum(err, 0.11)
-        except Exception:
-            return self._simple_rv(gmag)
+    def _pygaia_rv(self, grvs, teff=None, logg=None):
+        from pygaia.errors.spectroscopic import radial_velocity_uncertainty
+        release = RELEASE_MAP.get(self.release, "dr3")
+        grvs = np.asarray(grvs, dtype=np.float64)
+        if teff is None:
+            print("  Warning: no T_eff for the RV error model, assuming 5500 K")
+            teff = np.full_like(grvs, 5500.0)
+        if logg is None:
+            print("  Warning: no log g for the RV error model, assuming 4.0")
+            logg = np.full_like(grvs, 4.0)
+        err = radial_velocity_uncertainty(
+            np.where(np.isfinite(grvs), grvs, 99.0),
+            np.asarray(teff, dtype=np.float64),
+            np.asarray(logg, dtype=np.float64),
+            release=release,
+        )
+        err = np.where(np.isfinite(grvs), err, np.nan)
+        return np.maximum(err, 0.11)  # NaN propagates through np.maximum
 
     # --- Simple fallback models ---
 

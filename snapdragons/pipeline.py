@@ -132,7 +132,16 @@ def main():
     parser.add_argument("--param", default=None,
                         help="Path to ChaNGa .param file")
     parser.add_argument("--mag-limit", type=float, default=16.0,
-                        help="Apparent G_RVS magnitude limit (default 16)")
+                        help="Apparent faint magnitude limit (default 16)")
+    parser.add_argument("--mag-band", default="G_RVS",
+                        choices=["G_RVS", "G"],
+                        help="Band the faint limit applies to (default G_RVS)")
+    parser.add_argument("--selection-function", default="none",
+                        choices=["none", "dr3_rvs"],
+                        help="RVS selection function (gaiaunlimited DR3)")
+    parser.add_argument("--sf-shift", type=float, default=None,
+                        help="Evaluate the DR3 selection function at G - shift "
+                             "(default 2.5 for dr4/dr5, else 0)")
     parser.add_argument("--extinction", default="mwdust",
                         choices=["mwdust", "simulation", "none"],
                         help="Extinction mode")
@@ -176,6 +185,9 @@ def main():
         output_format=args.format,
         gaia_release=args.release,
         mag_limit=args.mag_limit,
+        mag_limit_band=args.mag_band,
+        selection_function=args.selection_function,
+        sf_mag_shift=args.sf_shift,
         extinction_mode=args.extinction,
         mwdust_map=args.dust_map,
         imf=args.imf,
