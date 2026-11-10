@@ -148,6 +148,46 @@ class KroupaIMF:
             total_m += self._segment_mass_integral(lo, hi, k, alpha)
         return total_m / total_n if total_n > 0 else 0.0
 
+    # --- Vectorised number CDF and its inverse (for per-particle truncation) ---
+
+    def cdf(self, m):
+        """Number CDF F(m) = N(< m) / N_total over [m_min, m_max], vectorised."""
+        m = np.clip(np.asarray(m, dtype=np.float64), self.m_min, self.m_max)
+        out = np.zeros_like(m)
+        cum = 0.0
+        for lo, hi, k, alpha, n_int in self._segments:
+            inseg = (m > lo) & (m <= hi)
+            above = m > hi
+            out[inseg] = cum + self._segment_number_integral(lo, m[inseg], k, alpha)
+            out[above] = cum + n_int
+            cum += n_int
+        return out / self._total_n
+
+    def ppf(self, u):
+        """Inverse number CDF: mass at quantile u in [0, 1], vectorised.
+
+        Uniform u between cdf(m_lo) and cdf(m_hi) gives masses distributed
+        as the IMF truncated to [m_lo, m_hi].
+        """
+        u = np.asarray(u, dtype=np.float64)
+        out = np.empty_like(u)
+        for (lo, hi, k, alpha, n_int), (f_lo, f_hi) in zip(
+                self._segments, self._cdf_bounds):
+            mask = (u >= f_lo) & (u < f_hi)
+            if not np.any(mask):
+                continue
+            out[mask] = self._invert_segment(
+                (u[mask] - f_lo) * self._total_n, lo, k, alpha)
+        out[u >= self._cdf_bounds[-1][1]] = self._m_hi
+        out[u < self._cdf_bounds[0][0]] = self._m_lo
+        return out
+
+    def stars_per_msun_between(self, m_lo, m_hi):
+        """Number of stars with initial mass in [m_lo, m_hi] per solar mass
+        of population formed over the full IMF range, vectorised."""
+        frac = np.clip(self.cdf(m_hi) - self.cdf(m_lo), 0.0, None)
+        return frac / self.mean_mass()
+
     def number_fraction_above(self, m_min_trunc):
         """Fraction of stars (by number) with mass >= m_min_trunc."""
         if m_min_trunc <= self.m_min:
@@ -253,6 +293,25 @@ class SalpeterIMF:
         n_int = (m_hi ** exp_n - m_lo ** exp_n) / exp_n
         m_int = (m_hi ** exp_m - m_lo ** exp_m) / exp_m
         return m_int / n_int
+
+    def cdf(self, m):
+        """Number CDF over [m_min, m_max], vectorised."""
+        m = np.clip(np.asarray(m, dtype=np.float64), self.m_min, self.m_max)
+        lo_exp = self.m_min ** self._exp
+        hi_exp = self.m_max ** self._exp
+        return (m ** self._exp - lo_exp) / (hi_exp - lo_exp)
+
+    def ppf(self, u):
+        """Inverse number CDF, vectorised."""
+        u = np.clip(np.asarray(u, dtype=np.float64), 0.0, 1.0)
+        lo_exp = self.m_min ** self._exp
+        hi_exp = self.m_max ** self._exp
+        return (lo_exp + u * (hi_exp - lo_exp)) ** (1.0 / self._exp)
+
+    def stars_per_msun_between(self, m_lo, m_hi):
+        """Stars with initial mass in [m_lo, m_hi] per solar mass formed."""
+        frac = np.clip(self.cdf(m_hi) - self.cdf(m_lo), 0.0, None)
+        return frac / self.mean_mass()
 
     def expected_count(self, particle_mass, m_min_trunc=None):
         m_lo = m_min_trunc or self.m_min

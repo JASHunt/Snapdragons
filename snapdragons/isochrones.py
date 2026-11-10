@@ -110,6 +110,25 @@ class IsochroneGrid:
         self._build_tree()
         return self
 
+    def load_cache(self, cache_path):
+        """Load a specific isochrone cache file (flat PARSEC columns in HDF5,
+        as written by this class), ignoring the config's grid settings."""
+        self._load_cache(cache_path)
+        self._build_tree()
+        return self
+
+    def cell_of(self, logage, mh):
+        """Index into ``grid_points`` of the nearest isochrone for each
+        (log age, [M/H]) pair, vectorised."""
+        queries = np.column_stack([np.atleast_1d(logage),
+                                   np.atleast_1d(mh)]) * self._scale
+        _, idx = self._tree.query(queries)
+        return idx
+
+    def cell(self, idx):
+        """Isochrone data dict for a ``grid_points`` index."""
+        return self._grid[tuple(self._grid_points[idx])]
+
     def _download_and_cache(self, cache_path):
         """Download PARSEC isochrones from CMD web interface."""
         import h5py

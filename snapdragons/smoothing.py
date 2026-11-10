@@ -19,7 +19,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-def estimate_smoothing_lengths(pos, vel, n_ngb=64, scale=1.0):
+def estimate_smoothing_lengths(pos, vel, n_ngb=64, scale=1.0, workers=-1):
     """Compute per-particle smoothing lengths in position and velocity.
 
     Uses kNN density estimation: rho_i = (k-1) / (4/3 pi r_k^3)
@@ -34,28 +34,33 @@ def estimate_smoothing_lengths(pos, vel, n_ngb=64, scale=1.0):
     scale : float
         Multiplicative calibration factor applied to both h_pos
         and h_vel (default 1.0).
+    workers : int
+        Threads for the kd-tree queries (-1 = all cores).
 
     Returns
     -------
     h_pos : (N,) array [kpc]
     h_vel : (N,) array [km/s]
     """
-    h_pos = _knn_smoothing_length(pos, n_ngb) * scale
-    h_vel = _knn_smoothing_length(vel, n_ngb) * scale
+    h_pos = knn_smoothing_length(pos, n_ngb, workers=workers) * scale
+    h_vel = knn_smoothing_length(vel, n_ngb, workers=workers) * scale
     return h_pos, h_vel
 
 
-def _knn_smoothing_length(coords, k):
+def knn_smoothing_length(coords, k, workers=-1):
     """Smoothing length from the k-th nearest-neighbour distance.
 
     h = r_k / (k-1)^(1/3), which is equivalent to inverting
     rho = (k-1) / (4/3 pi r_k^3) then h = (3/(4 pi rho))^(1/3).
     """
     tree = cKDTree(coords)
-    dists, _ = tree.query(coords, k=k + 1)
+    dists, _ = tree.query(coords, k=k + 1, workers=workers)
     r_k = dists[:, -1]
     r_k = np.maximum(r_k, 1e-30)
     return r_k / (k - 1) ** (1.0 / 3.0)
+
+
+_knn_smoothing_length = knn_smoothing_length
 
 
 def epanechnikov_offsets(h, n_stars, rng):
@@ -87,12 +92,12 @@ def epanechnikov_offsets(h, n_stars, rng):
 
     h_per_star = np.repeat(h, n_stars)
 
-    offsets = _sample_epanechnikov_3d(n_total, rng)
+    offsets = sample_epanechnikov_3d(n_total, rng)
     offsets *= h_per_star[:, None]
     return offsets
 
 
-def _sample_epanechnikov_3d(n, rng):
+def sample_epanechnikov_3d(n, rng):
     """Sample n points from a unit 3D Epanechnikov kernel via rejection.
 
     Proposal: uniform in the unit ball.
@@ -118,3 +123,6 @@ def _sample_epanechnikov_3d(n, rng):
         filled += take
 
     return result
+
+
+_sample_epanechnikov_3d = sample_epanechnikov_3d

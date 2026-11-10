@@ -3,7 +3,7 @@
 Generate mock Gaia catalogues from hydrodynamical simulation snapshots.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 from .config import Config
 from .pipeline import Pipeline

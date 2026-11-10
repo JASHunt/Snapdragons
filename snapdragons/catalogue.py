@@ -145,31 +145,57 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
     return catalogue
 
 
+def load_rvs_selection_function():
+    """gaiaunlimited's DR3 RVS selection function object (downloads and
+    caches its data, ~95 MB, on first use)."""
+    try:
+        from gaiaunlimited.selectionfunctions import DR3RVSSelectionFunction
+    except ImportError:
+        raise ImportError(
+            "The DR3 RVS selection function needs gaiaunlimited: "
+            "pip install gaiaunlimited"
+        )
+    return DR3RVSSelectionFunction()
+
+
+def rvs_selection_probability(l_deg, b_deg, gmag, g_rp, mag_shift=0.0,
+                              sfn=None, chunk=500_000):
+    """P(has RV | l, b, G, G - G_RP) from the Gaia DR3 RVS selection function
+    (Castro-Ginard et al. 2023, via gaiaunlimited), vectorised.
+
+    ``mag_shift`` is subtracted from G before the query: the DR3 function
+    evaluated at G - 2.5 is the stand-in for the unpublished DR4 one (same
+    sky pattern, limit shifted with the depth).  Sky cells and
+    colour-magnitude bins without data give P = 0.
+    """
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    if sfn is None:
+        sfn = load_rvs_selection_function()
+    l_deg = np.asarray(l_deg, dtype=np.float64)
+    b_deg = np.asarray(b_deg, dtype=np.float64)
+    gmag = np.asarray(gmag, dtype=np.float64)
+    g_rp = np.asarray(g_rp, dtype=np.float64)
+    n = len(gmag)
+    prob = np.zeros(n)
+    for i in range(0, n, chunk):
+        sl = slice(i, min(i + chunk, n))
+        coords = SkyCoord(l=l_deg[sl] * u.deg, b=b_deg[sl] * u.deg,
+                          frame="galactic")
+        p = sfn.query(coords, g=gmag[sl] - mag_shift, c=g_rp[sl])
+        prob[sl] = np.nan_to_num(np.asarray(p, dtype=np.float64), nan=0.0)
+    return prob
+
+
 def apply_selection_function(catalogue, config, rng, star_pos=None):
     """Thin the catalogue with the Gaia DR3 RVS selection function.
 
-    Uses gaiaunlimited's ``DR3RVSSelectionFunction`` (Castro-Ginard et al.
-    2023): P(has RV | HEALPix 32 pixel, G, G - G_RP).  Each star is kept
-    with that probability (Bernoulli draw).  Sky cells and colour-magnitude
-    bins without data give P = 0.
-
-    ``config.sf_mag_shift`` is subtracted from G before the query, so that
-    the DR3 function evaluated at G - 2.5 stands in for the unpublished DR4
-    one (same sky pattern, limit shifted with the depth).
-
+    Each star is kept with probability ``rvs_selection_probability`` (a
+    Bernoulli draw); the probability is stored as ``true/p_selection``.
     Needs l, b (taken from the catalogue if present, else computed from
     ``star_pos`` and the observer position), apparent G and G_RP.
     """
-    try:
-        from gaiaunlimited.selectionfunctions import DR3RVSSelectionFunction
-        from astropy.coordinates import SkyCoord
-        import astropy.units as u
-    except ImportError:
-        raise ImportError(
-            "selection_function='dr3_rvs' needs gaiaunlimited: "
-            "pip install gaiaunlimited"
-        )
-
     true = catalogue["true"]
     gmag = true.get("Gmag_app")
     rpmag = true.get("G_RPmag_app")
@@ -192,17 +218,8 @@ def apply_selection_function(catalogue, config, rng, star_pos=None):
     print(f"  Selection function: DR3 RVS (gaiaunlimited)"
           + (f", evaluated at G - {config.sf_mag_shift}"
              if config.sf_mag_shift else ""))
-    sfn = DR3RVSSelectionFunction()
-
-    prob = np.zeros(n)
-    chunk = 500_000
-    for i in range(0, n, chunk):
-        sl = slice(i, min(i + chunk, n))
-        coords = SkyCoord(l=l_deg[sl] * u.deg, b=b_deg[sl] * u.deg,
-                          frame="galactic")
-        p = sfn.query(coords, g=gmag[sl] - config.sf_mag_shift,
-                      c=gmag[sl] - rpmag[sl])
-        prob[sl] = np.nan_to_num(np.asarray(p, dtype=np.float64), nan=0.0)
+    prob = rvs_selection_probability(l_deg, b_deg, gmag, gmag - rpmag,
+                                     mag_shift=config.sf_mag_shift)
 
     keep = rng.uniform(size=n) < prob
     n_keep = int(np.sum(keep))
