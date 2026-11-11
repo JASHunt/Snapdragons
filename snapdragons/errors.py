@@ -57,10 +57,14 @@ class GaiaErrorModel:
         err = self._simple_pm(gmag)
         return err, err
 
-    def photometric_uncertainty(self, gmag):
-        """Photometric uncertainty in G, G_BP, G_RP [mag]."""
+    def photometric_uncertainty(self, gmag, bpmag=None, rpmag=None):
+        """Photometric uncertainty in G, G_BP, G_RP [mag].
+
+        Each band's uncertainty is evaluated at the star's magnitude in
+        that band; where G_BP or G_RP is not given, G is used in its place.
+        """
         if self._has_pygaia:
-            return self._pygaia_phot(gmag)
+            return self._pygaia_phot(gmag, bpmag, rpmag)
         return self._simple_phot(gmag)
 
     def radial_velocity_uncertainty(self, grvs, teff=None, logg=None):
@@ -141,7 +145,8 @@ class GaiaErrorModel:
         if "pmdec" in true:
             obs["pmdec"] = true["pmdec"] + rng.normal(0, pmdec_err)
 
-        g_err, bp_err, rp_err = self.photometric_uncertainty(gmag)
+        g_err, bp_err, rp_err = self.photometric_uncertainty(
+            gmag, true.get("G_BPmag_app"), true.get("G_RPmag_app"))
         unc["Gmag"] = g_err
         unc["G_BPmag"] = bp_err
         unc["G_RPmag"] = rp_err
@@ -216,12 +221,23 @@ class GaiaErrorModel:
             pmdec_err *= DR2_SCALE["pm"]
         return pmra_err, pmdec_err
 
-    def _pygaia_phot(self, gmag):
+    def _pygaia_phot(self, gmag, bpmag=None, rpmag=None):
         from pygaia.errors.photometric import magnitude_uncertainty
         release = RELEASE_MAP.get(self.release, "dr3")
-        g_err = magnitude_uncertainty("g", gmag, release=release)
-        bp_err = magnitude_uncertainty("bp", gmag, release=release)
-        rp_err = magnitude_uncertainty("rp", gmag, release=release)
+
+        def band_mag(mag):
+            # each band's uncertainty is a function of the magnitude in that
+            # band; fall back to G where it is missing, and stay inside
+            # PyGaia's tabulated range [4, 21]
+            if mag is None:
+                mag = gmag
+            mag = np.where(np.isfinite(mag), mag, gmag)
+            return np.clip(mag, GAIA_MAG_BRIGHT, GAIA_MAG_FAINT)
+
+        # PyGaia returns mmag
+        g_err = magnitude_uncertainty("g", band_mag(gmag), release=release) * 1e-3
+        bp_err = magnitude_uncertainty("bp", band_mag(bpmag), release=release) * 1e-3
+        rp_err = magnitude_uncertainty("rp", band_mag(rpmag), release=release) * 1e-3
         if self.release == "dr2":
             g_err *= DR2_SCALE["phot"]
             bp_err *= DR2_SCALE["phot"]
