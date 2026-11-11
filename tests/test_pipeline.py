@@ -1,219 +1,196 @@
-"""Synthetic end-to-end test of the Snapdragons pipeline.
+"""Pipeline: end-to-end runs on the mock snapshot, snapshot loading, CLI."""
 
-Creates a small mock dataset (no simulation file needed) and runs
-the full pipeline to verify all modules integrate correctly.
-"""
-
+import os
 import sys
-sys.path.insert(0, ".")
 
 import numpy as np
+import pytest
+
 from snapdragons import Config, Pipeline, read_catalogue
+from snapdragons import pipeline as pipeline_module
 from snapdragons.simulation import SimulationSnapshot
-from snapdragons.isochrones import IsochroneGrid
-from snapdragons.imf import KroupaIMF
-from snapdragons.population import synthesise_population
-from snapdragons.extinction import NoExtinction
-from snapdragons.errors import GaiaErrorModel
-from snapdragons.catalogue import build_catalogue, write_catalogue
+
+from conftest import n_rows
+
+pytest.importorskip("pygaia")
 
 
-def create_mock_snapshot(n_stars=50, n_gas=30):
-    """Create a simple mock snapshot for testing."""
-    rng = np.random.default_rng(42)
-
-    r = rng.uniform(2.0, 12.0, n_stars)
-    theta = rng.uniform(0, 2 * np.pi, n_stars)
-    z = rng.normal(0, 0.3, n_stars)
-    x = r * np.cos(theta)
-    y = r * np.sin(theta)
-
-    v_circ = 220.0
-    vx = -v_circ * np.sin(theta) + rng.normal(0, 20, n_stars)
-    vy = v_circ * np.cos(theta) + rng.normal(0, 20, n_stars)
-    vz = rng.normal(0, 10, n_stars)
-
-    mass = rng.uniform(1e3, 1e5, n_stars)
-    age = rng.uniform(0.1, 10.0, n_stars)
-    metallicity = rng.uniform(-1.5, 0.3, n_stars)
-
-    star_pos = np.column_stack([x, y, z])
-    star_vel = np.column_stack([vx, vy, vz])
-
-    snap = SimulationSnapshot.from_arrays(
-        star_pos=star_pos,
-        star_vel=star_vel,
-        star_mass=mass,
-        star_age=age,
-        star_metallicity=metallicity,
-    )
-    return snap
+def test_end_to_end(mock_snapshot, make_pipeline_config):
+    cfg = make_pipeline_config()
+    cat = Pipeline(cfg).run(snapshot=mock_snapshot)
+    n = n_rows(cat["true"])
+    assert n > 1000
+    assert os.path.exists(cfg.output_path)
+    back = read_catalogue(cfg.output_path)
+    assert back.n_stars == n
+    assert back.true.G_RVSmag_app.max() <= cfg.mag_limit
+    assert np.all(np.isfinite(back.observed.parallax))
+    assert np.all(back.uncertainties.parallax > 0)
+    assert back.metadata["n_stars"] == n
+    # the stars are where the snapshot's particles are
+    assert back.true.x.min() >= mock_snapshot.star_pos[:, 0].min()
+    assert back.true.x.max() <= mock_snapshot.star_pos[:, 0].max()
 
 
-def test_imf():
-    """Test IMF sampling correctness."""
-    print("=" * 40)
-    print("TEST: IMF sampling")
-    imf = KroupaIMF()
-    rng = np.random.default_rng(123)
-
-    masses = imf.sample(100000, rng=rng)
-    assert len(masses) == 100000
-    assert masses.min() >= 0.08
-    assert masses.max() <= 100.0
-    assert abs(masses.mean() - imf.mean_mass()) / imf.mean_mass() < 0.02
-
-    masses_t = imf.sample_truncated(10000, 2.0, rng=rng)
-    assert masses_t.min() >= 2.0
-
-    n_exp = imf.expected_count(1e4)
-    assert n_exp > 0
-
-    print("  PASSED\n")
+def test_pipeline_accepts_config_keywords(tmp_path):
+    p = Pipeline(mag_limit=13.0, extinction_mode="none", output_path=str(tmp_path / "c.h5"))
+    assert isinstance(p.config, Config)
+    assert p.config.mag_limit == 13.0
 
 
-def test_config():
-    """Test configuration and velocity computation."""
-    print("=" * 40)
-    print("TEST: Configuration")
-    c = Config()
-    assert abs(c.observer_velocity[0] - 11.1) < 0.01
-    assert c.observer_velocity[1] < 0  # should be negative (CCW rotation)
-    assert abs(c.observer_velocity[2] - 7.25) < 0.01
-
-    c2 = Config(observer_velocity=(10, 200, 5))
-    assert c2.observer_velocity == (10.0, 200.0, 5.0)
-
-    print("  PASSED\n")
+def test_no_snapshot_is_an_error(make_pipeline_config):
+    with pytest.raises(ValueError, match="snapshot"):
+        Pipeline(make_pipeline_config()).run()
 
 
-def test_isochrone_grid():
-    """Test isochrone grid (synthetic fallback if CMD unavailable)."""
-    print("=" * 40)
-    print("TEST: Isochrone grid")
-
-    config = Config(
-        logage_min=8.0,
-        logage_max=10.0,
-        logage_step=0.5,
-        mh_min=-1.0,
-        mh_max=0.0,
-        mh_step=0.5,
-    )
-
-    try:
-        grid = IsochroneGrid(config)
-        grid.load_or_download()
-    except Exception:
-        print("  CMD download unavailable, using synthetic isochrones")
-        grid = IsochroneGrid.generate_synthetic(config)
-
-    print(f"  Grid has {len(grid.grid_points)} isochrones")
-
-    iso, key = grid.get_nearest(9.0, -0.5)
-    print(f"  Nearest to (9.0, -0.5): {key}")
-    print(f"  Mass range: [{iso['Mini'].min():.3f}, {iso['Mini'].max():.3f}]")
-
-    props = grid.interpolate_stars(9.0, -0.5, np.array([0.5, 1.0, 2.0]))
-    print(f"  Interpolated Gmag: {props['Gmag']}")
-
-    m_min = grid.min_observable_mass(9.0, -0.5, 10.0, 20.7)
-    print(f"  Min observable mass at 10 kpc: {m_min:.3f} Msun")
-
-    print("  PASSED\n")
+def test_nothing_observable_returns_none_and_writes_nothing(mock_snapshot, make_pipeline_config):
+    cfg = make_pipeline_config(mag_limit=-5.0)
+    assert Pipeline(cfg).run(snapshot=mock_snapshot) is None
+    assert not os.path.exists(cfg.output_path)
 
 
-def test_pipeline_synthetic():
-    """Full pipeline test with mock data (requires isochrones)."""
-    print("=" * 40)
-    print("TEST: Full pipeline (synthetic data)")
-
-    config = Config(
-        output_path="/tmp/test_snapdragons.h5",
-        output_format="hdf5",
-        output_coords=["equatorial", "galactic", "cartesian"],
-        extinction_mode="none",
-        gaia_release="dr3",
-        mag_limit=20.7,
-        random_seed=42,
-        logage_min=8.0,
-        logage_max=10.0,
-        logage_step=0.5,
-        mh_min=-1.0,
-        mh_max=0.0,
-        mh_step=0.5,
-    )
-
-    snap = create_mock_snapshot(n_stars=20)
-
-    try:
-        # Try to load real isochrones, fall back to synthetic
-        try:
-            iso_grid = IsochroneGrid(config)
-            iso_grid.load_or_download()
-        except Exception:
-            print("  CMD download unavailable, using synthetic isochrones")
-            iso_grid = IsochroneGrid.generate_synthetic(config)
-
-        from snapdragons.extinction import NoExtinction
-        from snapdragons.errors import GaiaErrorModel
-        from snapdragons.catalogue import build_catalogue, write_catalogue
-
-        ext_calc = NoExtinction(config)
-        error_model = GaiaErrorModel(config)
-        rng = np.random.default_rng(42)
-
-        config.print_summary()
-
-        raw_cat = synthesise_population(
-            snap, iso_grid, config, extinction_calc=ext_calc)
-
-        if raw_cat is not None:
-            catalogue = build_catalogue(
-                raw_cat, config,
-                extinction_calc=ext_calc,
-                error_model=error_model,
-                rng=rng,
-            )
-            write_catalogue(catalogue, config)
-
-            n = 0
-            for v in catalogue["true"].values():
-                if isinstance(v, np.ndarray):
-                    n = len(v)
-                    break
-            print(f"  Generated {n} stars in catalogue")
-
-            cat = read_catalogue("/tmp/test_snapdragons.h5")
-            print(f"  Read back: {cat}")
-            print(f"  True columns: {cat.true.columns}")
-            print(f"  Observed columns: {cat.observed.columns}")
-            print(f"  Stellar columns: {cat.stellar.columns}")
-
-            # Verify data integrity
-            assert cat.n_stars > 0, "No stars in catalogue"
-            assert hasattr(cat.true, "ra"), "Missing RA"
-            assert hasattr(cat.true, "dec"), "Missing Dec"
-            assert hasattr(cat.true, "parallax"), "Missing parallax"
-            assert hasattr(cat.true, "Gmag_app"), "Missing apparent G"
-            assert hasattr(cat.stellar, "Mini"), "Missing initial mass"
-            print("  Data integrity checks passed")
-
-            print("  PASSED\n")
-        else:
-            print("  No stars generated (check isochrones)\n")
-
-    except ImportError as e:
-        print(f"  SKIPPED (missing dependency: {e})\n")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"  FAILED: {e}\n")
+def test_same_seed_same_catalogue(mock_snapshot, make_pipeline_config):
+    a = Pipeline(make_pipeline_config(random_seed=7)).run(snapshot=mock_snapshot)
+    b = Pipeline(make_pipeline_config(random_seed=7)).run(snapshot=mock_snapshot)
+    c = Pipeline(make_pipeline_config(random_seed=8)).run(snapshot=mock_snapshot)
+    for group in ("true", "observed", "uncertainties", "stellar"):
+        for key in a[group]:
+            assert np.array_equal(a[group][key], b[group][key], equal_nan=True), (group, key)
+    assert n_rows(c["true"]) != n_rows(a["true"]) or not np.array_equal(
+        c["observed"]["parallax"], a["observed"]["parallax"])
 
 
-if __name__ == "__main__":
-    test_imf()
-    test_config()
-    test_isochrone_grid()
-    test_pipeline_synthetic()
-    print("All tests complete.")
+def test_no_errors(mock_snapshot, make_pipeline_config):
+    cfg = make_pipeline_config(apply_errors=False)
+    cat = Pipeline(cfg).run(snapshot=mock_snapshot)
+    assert cat["observed"] == {} and cat["uncertainties"] == {}
+    assert read_catalogue(cfg.output_path).observed.columns == []
+
+
+def test_fits_output(mock_snapshot, make_pipeline_config, tmp_path):
+    cfg = make_pipeline_config(output_format="fits", output_path=str(tmp_path / "cat.fits"))
+    cat = Pipeline(cfg).run(snapshot=mock_snapshot)
+    assert read_catalogue(cfg.output_path).n_stars == n_rows(cat["true"])
+
+
+def test_simulation_extinction_end_to_end(mock_snapshot_gas, make_pipeline_config):
+    clear = Pipeline(make_pipeline_config()).run(snapshot=mock_snapshot_gas)
+    dusty = Pipeline(make_pipeline_config(extinction_mode="simulation")).run(snapshot=mock_snapshot_gas)
+    a_v = dusty["true"]["A_V"]
+    assert np.all(a_v >= 0) and np.median(a_v) > 0.05
+    assert np.all(clear["true"]["A_V"] == 0)
+    assert n_rows(dusty["true"]) < n_rows(clear["true"])
+    assert np.corrcoef(dusty["true"]["dist"], a_v)[0, 1] > 0.7
+    half = Pipeline(make_pipeline_config(extinction_mode="simulation", dust_to_gas_ratio=0.5)).run(
+        snapshot=mock_snapshot_gas)
+    assert np.median(half["true"]["A_V"]) < np.median(a_v)
+
+
+def test_all_options_together(mock_snapshot_gas, make_pipeline_config):
+    cfg = make_pipeline_config(
+        extinction_mode="simulation", unresolved_binaries=True, phase_space_smoothing=True,
+        smoothing_ngb=16, gaia_release="dr4", mag_limit=13.0, sampling="poisson", fsample=0.5)
+    cat = Pipeline(cfg).run(snapshot=mock_snapshot_gas)
+    n = n_rows(cat["true"])
+    assert n > 500
+    assert all(len(v) == n for g in cat.values() for v in g.values())
+    assert cat["true"]["G_RVSmag_app"].max() <= 13.0
+    assert {"is_binary", "q"} <= set(cat["stellar"])
+
+
+def test_diagnostic_plots(mock_snapshot_gas, make_pipeline_config):
+    pytest.importorskip("matplotlib")
+    cfg = make_pipeline_config(make_plots=True, extinction_mode="simulation")
+    Pipeline(cfg).run(snapshot=mock_snapshot_gas)
+    files = sorted(os.listdir(cfg.plot_dir))
+    expected = {"sky_scatter.png", "sky_density.png", "gaia_photometry_sky.png", "cartesian_xy.png",
+                "cartesian_xz.png", "cmd.png", "parallax.png", "distance_mag.png",
+                "extinction_map.png"}
+    assert expected <= set(files)
+    assert all(os.path.getsize(os.path.join(cfg.plot_dir, f)) > 2000 for f in files)
+
+
+def test_plots_without_errors_or_extra_coordinates(mock_snapshot, make_pipeline_config):
+    pytest.importorskip("matplotlib")
+    cfg = make_pipeline_config(make_plots=True, apply_errors=False, output_coords=["equatorial"])
+    Pipeline(cfg).run(snapshot=mock_snapshot)
+    files = set(os.listdir(cfg.plot_dir))
+    assert {"cmd.png", "parallax.png", "distance_mag.png"} <= files
+    assert "cartesian_xy.png" not in files and "sky_density.png" not in files
+
+
+# --- snapshot loading -----------------------------------------------------------
+
+@pytest.mark.parametrize("mode,expect_gas", [("none", False), ("simulation", True)])
+def test_snapshot_is_loaded_with_the_configured_options(mock_snapshot_gas, make_pipeline_config,
+                                                       monkeypatch, mode, expect_gas):
+    seen = {}
+
+    def fake_from_pynbody(filepath, **kwargs):
+        seen.update(filepath=filepath, **kwargs)
+        return mock_snapshot_gas
+
+    monkeypatch.setattr(SimulationSnapshot, "from_pynbody", staticmethod(fake_from_pynbody))
+    cfg = make_pipeline_config(snapshot_path="run.000100", param_file="run.param",
+                               extinction_mode=mode, apply_tform_correction=False)
+    Pipeline(cfg).run()
+    assert seen["filepath"] == "run.000100"
+    assert seen["param_file"] == "run.param"
+    assert seen["load_gas"] is expect_gas
+    assert seen["apply_tform_correction"] is False
+
+
+# --- command line ---------------------------------------------------------------
+
+def run_cli(monkeypatch, argv):
+    captured = {}
+
+    def fake_run(self, snapshot=None):
+        captured["config"] = self.config
+
+    monkeypatch.setattr(Pipeline, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["snapdragons"] + argv)
+    pipeline_module.main()
+    return captured["config"]
+
+
+def test_cli_defaults_match_the_config_defaults(monkeypatch):
+    cfg = run_cli(monkeypatch, ["snap.000100"])
+    ref = Config()
+    assert cfg.snapshot_path == "snap.000100"
+    for field in ("mag_limit", "mag_limit_band", "gaia_release", "extinction_mode", "mwdust_map",
+                  "imf", "sampling", "output_coords", "output_format", "output_path", "fsample",
+                  "observer_position", "selection_function", "sf_mag_shift", "apply_errors",
+                  "apply_tform_correction", "make_plots", "plot_dir", "random_seed", "param_file"):
+        assert getattr(cfg, field) == getattr(ref, field), field
+
+
+def test_cli_options_reach_the_config(monkeypatch):
+    cfg = run_cli(monkeypatch, [
+        "snap.000100", "-o", "out/c.fits", "--format", "fits", "--release", "dr4",
+        "--param", "p.param", "--mag-limit", "14.5", "--mag-band", "G",
+        "--selection-function", "dr3_rvs", "--sf-shift", "1.0", "--extinction", "simulation",
+        "--dust-map", "Green19", "--imf", "salpeter", "--sampling", "poisson",
+        "--coords", "galactic", "cartesian", "--no-errors", "--no-tform-correction",
+        "--plots", "--plot-dir", "figs", "--seed", "11", "--fsample", "0.25",
+        "--obs-x", "-8.0", "--obs-y", "1.0", "--obs-z", "0.0"])
+    assert cfg.output_path == "out/c.fits" and cfg.output_format == "fits"
+    assert cfg.gaia_release == "dr4" and cfg.param_file == "p.param"
+    assert cfg.mag_limit == 14.5 and cfg.mag_limit_band == "G"
+    assert cfg.selection_function == "dr3_rvs" and cfg.sf_mag_shift == 1.0
+    assert cfg.extinction_mode == "simulation" and cfg.mwdust_map == "Green19"
+    assert cfg.imf == "salpeter" and cfg.sampling == "poisson"
+    assert cfg.output_coords == ["galactic", "cartesian"]
+    assert cfg.apply_errors is False and cfg.apply_tform_correction is False
+    assert cfg.make_plots is True and cfg.plot_dir == "figs"
+    assert cfg.random_seed == 11 and cfg.fsample == 0.25
+    assert cfg.observer_position == (-8.0, 1.0, 0.0)
+
+
+def test_cli_rejects_unknown_choices(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["snapdragons", "snap", "--release", "dr9"])
+    with pytest.raises(SystemExit):
+        pipeline_module.main()
+    monkeypatch.setattr(sys, "argv", ["snapdragons"])
+    with pytest.raises(SystemExit):
+        pipeline_module.main()

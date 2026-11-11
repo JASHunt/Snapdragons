@@ -17,3 +17,6 @@ dist/
 .DS_Store
 wget-log
 .claude/
+.pytest_cache/
+.coverage
+htmlcov/

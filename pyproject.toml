@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapdragons"
-version = "2.1.0"
+version = "2.1.1"
 description = "Stellar population synthesis from galaxy simulations to mock Gaia catalogues"
 requires-python = ">=3.9"
 license = "MIT"
@@ -27,6 +27,17 @@ errors = ["pygaia>=3.0"]
 dust = ["mwdust>=1.0"]
 plots = ["matplotlib>=3.5"]
 all = ["snapdragons[isochrones,errors,dust,plots]"]
+test = ["pytest>=7", "pygaia>=3.0", "matplotlib>=3.5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "external: needs downloaded third-party data (mwdust maps, gaiaunlimited selection function); run with --run-external",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:.*numexpr.*:UserWarning",
+]
 
 [project.scripts]
 snapdragons = "snapdragons.pipeline:main"
