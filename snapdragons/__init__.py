@@ -3,7 +3,7 @@
 Generate mock Gaia catalogues from hydrodynamical simulation snapshots.
 """
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
 
 from .config import Config
 from .pipeline import Pipeline
@@ -14,9 +14,11 @@ from .imf import get_imf, KroupaIMF, SalpeterIMF
 from .extinction import get_extinction_calculator
 from .errors import GaiaErrorModel
 from .photometry import grvs_from_g_rp
+from .frame import GalacticFrame
 
 __all__ = [
     "grvs_from_g_rp",
+    "GalacticFrame",
     "Config",
     "Pipeline",
     "read_catalogue",

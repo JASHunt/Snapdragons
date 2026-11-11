@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapdragons"
-version = "2.1.1"
+version = "2.2.0"
 description = "Stellar population synthesis from galaxy simulations to mock Gaia catalogues"
 requires-python = ">=3.9"
 license = "MIT"

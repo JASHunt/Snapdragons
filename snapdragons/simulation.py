@@ -50,9 +50,15 @@ class SimulationSnapshot:
         filepath : str
             Path to the snapshot file (Tipsy, Gadget, etc.).
         center : bool
-            Centre the snapshot on the main halo.
+            Centre the snapshot on the main halo (positions and velocities).
         orient : bool
-            Rotate to face-on (angular momentum along z).
+            Level the disc into the xy plane if it is tilted by more than
+            0.5 deg, with the smallest rotation that does so (see
+            ``level_disc``).  The sense of rotation and the azimuths in
+            the plane are kept: a disc that already lies in the xy plane
+            is not touched.  (pynbody's ``faceon`` is not used: it always
+            puts the angular momentum along +z, which turns a clockwise
+            disc over and moves every particle to the far side.)
         load_gas : bool
             Also load gas particles (needed for simulation-based extinction).
         param_file : str, optional
@@ -81,17 +87,16 @@ class SimulationSnapshot:
 
         sim.physical_units()
 
-        if center or orient:
+        if center:
             try:
-                halo = sim
-                if center:
-                    pynbody.analysis.halo.center(halo)
-                    print("  Centred on main halo")
-                if orient:
-                    pynbody.analysis.angmom.faceon(halo)
-                    print("  Rotated to face-on orientation")
+                cen = np.array(pynbody.analysis.halo.center(sim, retcen=True),
+                               dtype=np.float64)
+                pynbody.analysis.halo.center(sim)
+                print(f"  Centred on the main halo: its centre was at "
+                      f"({cen[0]:.3f}, {cen[1]:.3f}, {cen[2]:.3f}) kpc and is "
+                      f"now the origin; its central velocity was subtracted")
             except Exception as e:
-                print(f"  Warning: centering/orientation failed ({e}), "
+                print(f"  Warning: centring failed ({e}), "
                       f"using raw coordinates")
 
         snap = cls()
@@ -121,7 +126,40 @@ class SimulationSnapshot:
             snap.gas_metallicity = cls._get_metallicity(gas)
             print(f"  Loaded {snap.n_gas} gas particles")
 
+        if orient:
+            snap.level_disc()
+
         return snap
+
+    def level_disc(self, r_max=15.0, min_tilt_deg=0.5):
+        """Put the stellar disc in the xy plane with the smallest rotation.
+
+        The angular momentum of the stars within ``r_max`` kpc is taken to
+        +z or -z, whichever is nearer, by a rotation about the line of
+        nodes.  So the sense of rotation is kept and azimuths in the plane
+        are not turned.  Nothing is done if the tilt is below
+        ``min_tilt_deg``.  Star positions and velocities and gas positions
+        are rotated in place.
+
+        Returns the tilt found [deg].
+        """
+        from .frame import angular_momentum, levelling_rotation
+        L = angular_momentum(self.star_pos, self.star_vel, self.star_mass,
+                             r_max=r_max)
+        matrix, tilt = levelling_rotation(L)
+        sense = "clockwise" if L[2] < 0 else "counter-clockwise"
+        if tilt < min_tilt_deg:
+            print(f"  Disc already lies in the xy plane (tilt {tilt:.2f} deg, "
+                  f"rotating {sense} seen from +z): coordinates left as they are")
+            return tilt
+        self.star_pos = self.star_pos @ matrix.T
+        self.star_vel = self.star_vel @ matrix.T
+        if self.gas_pos is not None:
+            self.gas_pos = self.gas_pos @ matrix.T
+        print(f"  Disc was tilted {tilt:.2f} deg from the xy plane: levelled "
+              f"with the smallest rotation that does it.  It still rotates "
+              f"{sense} seen from +z and in-plane azimuths are unchanged")
+        return tilt
 
     @staticmethod
     def _get_age(family):

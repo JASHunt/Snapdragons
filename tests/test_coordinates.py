@@ -5,7 +5,7 @@ import astropy.units as u
 import numpy as np
 import pytest
 
-from snapdragons import Config
+from snapdragons import GalacticFrame
 from snapdragons.coordinates import (
     cartesian_to_galactic, galactic_to_equatorial, observed_to_cartesian,
     compute_observables,
@@ -120,10 +120,17 @@ def test_rotation_to_icrs_preserves_pm_modulus_and_rv(rng):
 
 # --- compute_observables ---------------------------------------------------
 
+FRAMES = [
+    GalacticFrame(),
+    GalacticFrame(rotation="counterclockwise"),
+    GalacticFrame(observer_position=(3.0, -7.0, -0.1), rotation="clockwise"),
+    GalacticFrame(observer_position=(5.0, 6.0, 0.3), rotation="counterclockwise"),
+]
+
+
 def test_default_observer_sees_the_galactic_centre_at_l0():
-    c = Config()
-    out = compute_observables(np.zeros((1, 3)), np.zeros((1, 3)),
-                              c.observer_position, c.observer_velocity,
+    frame = GalacticFrame()
+    out = compute_observables(np.zeros((1, 3)), np.zeros((1, 3)), frame,
                               coord_systems=("galactic",))
     g = out["galactic"]
     assert g["l"][0] == pytest.approx(0.0, abs=1e-9)
@@ -131,11 +138,10 @@ def test_default_observer_sees_the_galactic_centre_at_l0():
     assert g["dist"][0] == pytest.approx(np.hypot(8.2, 0.02))
 
 
-def test_comoving_star_has_no_relative_motion():
-    c = Config()
-    pos = np.array([[-8.2 + 0.5, 0.3, 0.1]])
-    out = compute_observables(pos, np.array([c.observer_velocity]),
-                              c.observer_position, c.observer_velocity,
+@pytest.mark.parametrize("frame", FRAMES)
+def test_comoving_star_has_no_relative_motion(frame):
+    pos = frame.obs_pos[None] + [[0.5, 0.3, 0.1]]
+    out = compute_observables(pos, frame.obs_vel[None], frame,
                               coord_systems=("galactic", "equatorial"))
     for k in ("mul", "mub", "vr"):
         assert out["galactic"][k][0] == pytest.approx(0.0, abs=1e-9)
@@ -143,50 +149,41 @@ def test_comoving_star_has_no_relative_motion():
         assert out["equatorial"][k][0] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_rotation_sense_convention():
-    """Documents the frame convention as coded: the disc is assumed to
-    rotate counter-clockwise seen from +z, so with the Sun on the -x axis
-    the direction of rotation is -y, which is l = 270 deg (the real Milky
-    Way rotates toward l = 90).  A deliberate change of convention should
-    change this test."""
-    c = Config()
-    assert c.observer_velocity[1] < 0
-    ahead = np.array([[-8.2, -1.0, 0.02]])       # 1 kpc along the Sun's motion
-    out = compute_observables(ahead, np.zeros((1, 3)), c.observer_position,
-                              c.observer_velocity, coord_systems=("galactic",))
-    assert out["galactic"]["l"][0] == pytest.approx(270.0)
-
-
 @pytest.mark.parametrize("systems", [
     ("equatorial",), ("galactic",), ("cartesian",),
     ("equatorial", "galactic"), ("equatorial", "galactic", "cartesian"),
 ])
 def test_requested_systems_and_distance(systems, rng):
-    c = Config()
-    pos = np.asarray(c.observer_position) + rng.uniform(-2, 2, (50, 3))
+    frame = GalacticFrame()
+    pos = frame.obs_pos + rng.uniform(-2, 2, (50, 3))
     vel = rng.normal(0, 50, (50, 3))
-    out = compute_observables(pos, vel, c.observer_position,
-                              c.observer_velocity, coord_systems=systems)
+    out = compute_observables(pos, vel, frame, coord_systems=systems)
     assert set(out) == set(systems) | {"_dist"}
-    expected = np.linalg.norm(pos - np.asarray(c.observer_position), axis=1)
+    expected = np.linalg.norm(pos - frame.obs_pos, axis=1)
     assert np.allclose(out["_dist"], expected)
     if "cartesian" in systems:
         assert np.array_equal(out["cartesian"]["x"], pos[:, 0])
         assert np.array_equal(out["cartesian"]["vz"], vel[:, 2])
+        assert np.allclose(out["cartesian"]["dist"], expected)
+
+
+def test_cartesian_output_is_in_simulation_coordinates_whatever_the_frame(rng):
+    pos, vel = rng.uniform(-9, 9, (30, 3)), rng.normal(0, 100, (30, 3))
+    for frame in FRAMES:
+        c = compute_observables(pos, vel, frame, coord_systems=("cartesian",))["cartesian"]
+        assert np.array_equal(np.column_stack([c["x"], c["y"], c["z"]]), pos)
+        assert np.array_equal(np.column_stack([c["vx"], c["vy"], c["vz"]]), vel)
 
 
 # --- observed_to_cartesian -------------------------------------------------
 
-def test_round_trip_recovers_positions_and_velocities(rng):
-    c = Config()
-    obs_pos = np.asarray(c.observer_position)
-    obs_vel = np.asarray(c.observer_velocity)
-    pos = obs_pos + rng.uniform(-4, 4, (300, 3))
-    vel = obs_vel + rng.normal(0, 60, (300, 3))
-    eq = compute_observables(pos, vel, obs_pos, obs_vel)["equatorial"]
+@pytest.mark.parametrize("frame", FRAMES)
+def test_round_trip_recovers_positions_and_velocities(frame, rng):
+    pos = frame.obs_pos + rng.uniform(-4, 4, (300, 3))
+    vel = frame.obs_vel + rng.normal(0, 60, (300, 3))
+    eq = compute_observables(pos, vel, frame)["equatorial"]
     back = observed_to_cartesian(eq["ra"], eq["dec"], eq["parallax"],
-                                 eq["pmra"], eq["pmdec"], eq["rv"],
-                                 obs_pos, obs_vel)
+                                 eq["pmra"], eq["pmdec"], eq["rv"], frame=frame)
     got_pos = np.column_stack([back["x"], back["y"], back["z"]])
     got_vel = np.column_stack([back["vx"], back["vy"], back["vz"]])
     assert np.allclose(got_pos, pos, atol=1e-8)
@@ -194,6 +191,7 @@ def test_round_trip_recovers_positions_and_velocities(rng):
 
 
 def test_round_trip_positions_only(rng):
+    # without a frame: observer-centred, along the Galactic axes
     pos = rng.uniform(-4, 4, (20, 3))
     gal = cartesian_to_galactic(*pos.T)
     eq = galactic_to_equatorial(gal["l"], gal["b"], gal["dist"])
@@ -207,9 +205,10 @@ def test_non_positive_parallax_gives_nan():
     dec = np.array([5.0, -5.0, 0.0])
     plx = np.array([1.0, 0.0, -0.3])
     pm = np.zeros(3)
-    out = observed_to_cartesian(ra, dec, plx, pm, pm, pm)
-    for k in ("x", "y", "z", "vx", "vy", "vz"):
-        assert np.isfinite(out[k][0])
-        assert np.isnan(out[k][1]) and np.isnan(out[k][2])
+    for frame in (None, GalacticFrame(rotation="counterclockwise")):
+        out = observed_to_cartesian(ra, dec, plx, pm, pm, pm, frame=frame)
+        for k in ("x", "y", "z", "vx", "vy", "vz"):
+            assert np.isfinite(out[k][0])
+            assert np.isnan(out[k][1]) and np.isnan(out[k][2])
     allbad = observed_to_cartesian(ra, dec, -np.ones(3))
     assert all(np.all(np.isnan(v)) for v in allbad.values())

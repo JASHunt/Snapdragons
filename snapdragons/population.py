@@ -14,7 +14,7 @@ from scipy.interpolate import interp1d
 from tqdm import tqdm
 
 from .imf import get_imf
-from .coordinates import cartesian_to_galactic
+from .frame import GalacticFrame, WithFrame
 from .extinction import EXTINCTION_COEFFS
 from .photometry import grvs_from_g_rp
 
@@ -166,7 +166,7 @@ def _mass_integral(imf, m_lo, m_hi):
 
 
 def synthesise_population(snapshot, isochrone_grid, config,
-                          extinction_calc=None):
+                          extinction_calc=None, frame=None):
     """Generate individual stars from simulation star particles.
 
     Groups particles by isochrone grid cell (~1k cells) instead of
@@ -179,16 +179,21 @@ def synthesise_population(snapshot, isochrone_grid, config,
     isochrone_grid : IsochroneGrid
     config : Config
     extinction_calc : ExtinctionCalculator, optional
+    frame : GalacticFrame, optional
+        The observer's frame.  If None it is built from the config, with
+        the sense of rotation detected from the snapshot.
 
     Returns
     -------
-    dict of arrays — the raw stellar catalogue (before error convolution).
+    dict of arrays — the raw stellar catalogue (before error convolution),
+    with the frame used attached as ``.frame``.
     """
+    if frame is None:
+        frame = GalacticFrame.from_config(config, snapshot)
     imf = get_imf(config.imf, m_min=config.m_min, m_max=config.m_max)
     rng = np.random.default_rng(config.random_seed)
 
-    obs_pos = np.asarray(config.observer_position)
-    obs_vel = np.asarray(config.observer_velocity)
+    obs_pos = frame.obs_pos
 
     n_particles = snapshot.n_star
 
@@ -248,8 +253,7 @@ def synthesise_population(snapshot, isochrone_grid, config,
         import time as _time
         t_ext = _time.time()
         print(f"  Precomputing extinction for {n_use:,} particles ...")
-        gal_all = cartesian_to_galactic(rel_all[:, 0], rel_all[:, 1],
-                                        rel_all[:, 2])
+        gal_all = frame.galactic(part_pos)
         try:
             particle_av = extinction_calc.compute(
                 gal_all["l"], gal_all["b"], gal_all["dist"],
@@ -527,6 +531,8 @@ def synthesise_population(snapshot, isochrone_grid, config,
         "A_V": cat_av,
     }
     catalogue.update(merged_props)
+    catalogue = WithFrame(catalogue)
+    catalogue.frame = frame
 
     for band in ["Gmag", "G_BPmag", "G_RPmag"]:
         if band in catalogue:

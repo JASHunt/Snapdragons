@@ -10,10 +10,11 @@ import os
 
 from .coordinates import compute_observables
 from .extinction import EXTINCTION_COEFFS
+from .frame import GalacticFrame, WithFrame
 
 
 def build_catalogue(raw_cat, config, error_model=None, rng=None,
-                    extinction_calc=None):
+                    extinction_calc=None, frame=None):
     """Assemble the final catalogue from raw population synthesis output.
 
     Extinction is already applied to apparent magnitudes in the raw
@@ -26,10 +27,15 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
     error_model : GaiaErrorModel
     rng : numpy Generator
     extinction_calc : ignored (kept for backwards compatibility)
+    frame : GalacticFrame, optional
+        The observer's frame.  Defaults to the one the synthesis used
+        (``raw_cat.frame``), else one built from the config (which then
+        needs an explicit ``rotation``).
 
     Returns
     -------
-    dict with "true", "observed", "uncertainties", "stellar" sub-dicts.
+    dict with "true", "observed", "uncertainties", "stellar" sub-dicts,
+    with the frame attached as ``.frame``.
     """
     if raw_cat is None:
         return None
@@ -37,12 +43,13 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
     if rng is None:
         rng = np.random.default_rng(config.random_seed)
 
-    obs_pos = np.asarray(config.observer_position)
-    obs_vel = np.asarray(config.observer_velocity)
+    if frame is None:
+        frame = getattr(raw_cat, "frame", None)
+    if frame is None:
+        frame = GalacticFrame.from_config(config)
 
     coords = compute_observables(
-        raw_cat["pos"], raw_cat["vel"],
-        obs_pos, obs_vel,
+        raw_cat["pos"], raw_cat["vel"], frame,
         coord_systems=tuple(config.output_coords),
     )
     dist = coords.pop("_dist")
@@ -113,11 +120,13 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
             arr = raw_cat[key]
             stellar[key] = arr[mag_mask] if isinstance(arr, np.ndarray) else arr
 
-    catalogue = {"true": true, "stellar": stellar}
+    catalogue = WithFrame({"true": true, "stellar": stellar})
+    catalogue.frame = frame
 
     if config.selection_function != "none":
         catalogue = apply_selection_function(
-            catalogue, config, rng, star_pos=raw_cat["pos"][mag_mask])
+            catalogue, config, rng, star_pos=raw_cat["pos"][mag_mask],
+            frame=frame)
 
     if config.apply_errors and error_model is not None:
         catalogue = error_model.apply_errors(catalogue, rng=rng)
@@ -129,8 +138,7 @@ def build_catalogue(raw_cat, config, error_model=None, rng=None,
                 obs_cart = observed_to_cartesian(
                     obs["ra"], obs["dec"], obs["parallax"],
                     obs.get("pmra"), obs.get("pmdec"), obs.get("rv"),
-                    np.asarray(config.observer_position),
-                    np.asarray(config.observer_velocity),
+                    frame=frame,
                 )
                 for k, v in obs_cart.items():
                     obs[k] = v
@@ -188,13 +196,14 @@ def rvs_selection_probability(l_deg, b_deg, gmag, g_rp, mag_shift=0.0,
     return prob
 
 
-def apply_selection_function(catalogue, config, rng, star_pos=None):
+def apply_selection_function(catalogue, config, rng, star_pos=None,
+                             frame=None):
     """Thin the catalogue with the Gaia DR3 RVS selection function.
 
     Each star is kept with probability ``rvs_selection_probability`` (a
     Bernoulli draw); the probability is stored as ``true/p_selection``.
     Needs l, b (taken from the catalogue if present, else computed from
-    ``star_pos`` and the observer position), apparent G and G_RP.
+    ``star_pos`` in the observer's frame), apparent G and G_RP.
     """
     true = catalogue["true"]
     gmag = true.get("Gmag_app")
@@ -210,9 +219,11 @@ def apply_selection_function(catalogue, config, rng, star_pos=None):
     else:
         if star_pos is None:
             raise ValueError("Selection function needs l, b or star_pos.")
-        from .coordinates import cartesian_to_galactic
-        rel = star_pos - np.asarray(config.observer_position)
-        gal = cartesian_to_galactic(rel[:, 0], rel[:, 1], rel[:, 2])
+        if frame is None:
+            frame = getattr(catalogue, "frame", None)
+        if frame is None:
+            frame = GalacticFrame.from_config(config)
+        gal = frame.galactic(star_pos)
         l_deg, b_deg = gal["l"], gal["b"]
 
     print(f"  Selection function: DR3 RVS (gaiaunlimited)"
@@ -259,7 +270,16 @@ def write_hdf5(catalogue, filepath, config):
         meta.attrs["imf"] = config.imf
         meta.attrs["extinction_mode"] = config.extinction_mode
         meta.attrs["observer_position"] = list(config.observer_position)
-        meta.attrs["observer_velocity"] = list(config.observer_velocity)
+        frame = getattr(catalogue, "frame", None)
+        if frame is not None:
+            fm = frame.metadata()
+            meta.attrs["observer_velocity"] = fm["observer_velocity"]
+            meta.attrs["rotation"] = fm["rotation"]
+            meta.attrs["rotation_source"] = fm["rotation_source"]
+            meta.attrs["galactic_north"] = fm["galactic_north"]
+            meta.attrs["frame_axes"] = np.array(fm["frame_axes"])
+        elif config.observer_velocity is not None:
+            meta.attrs["observer_velocity"] = list(config.observer_velocity)
         meta.attrs["output_coords"] = config.output_coords
         meta.attrs["photometric_system"] = config.photometric_system
 

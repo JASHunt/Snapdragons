@@ -32,6 +32,33 @@ def test_end_to_end(mock_snapshot, make_pipeline_config):
     assert back.true.x.max() <= mock_snapshot.star_pos[:, 0].max()
 
 
+def test_frame_is_detected_and_reported(mock_snapshot, make_pipeline_config, capsys):
+    from conftest import build_mock_snapshot
+    cat = Pipeline(make_pipeline_config()).run(snapshot=mock_snapshot)
+    out = capsys.readouterr().out
+    assert "Galactic frame" in out
+    assert "Disc rotation    : clockwise seen from the simulation's +z" in out
+    assert "Galactic north   : +z of the simulation" in out
+    assert cat.frame.rotation == "clockwise"
+
+    cfg = make_pipeline_config()
+    cat = Pipeline(cfg).run(snapshot=build_mock_snapshot(rotation="counterclockwise"))
+    out = capsys.readouterr().out
+    assert "Disc rotation    : counterclockwise" in out
+    assert "Galactic north   : -z of the simulation" in out
+    assert "No particle was moved or mirrored" in out
+    meta = read_catalogue(cfg.output_path).metadata
+    assert meta["rotation"] == "counterclockwise" and meta["galactic_north"] == "-z"
+    assert meta["observer_velocity"] == pytest.approx([11.1, -245.04, -7.25])
+
+
+def test_rotation_can_be_forced(mock_snapshot, make_pipeline_config, capsys):
+    cat = Pipeline(make_pipeline_config(rotation="counterclockwise")).run(snapshot=mock_snapshot)
+    out = capsys.readouterr().out
+    assert cat.frame.rotation == "counterclockwise"
+    assert "WARNING" in out and "l = 270" in out
+
+
 def test_pipeline_accepts_config_keywords(tmp_path):
     p = Pipeline(mag_limit=13.0, extinction_mode="none", output_path=str(tmp_path / "c.h5"))
     assert isinstance(p.config, Config)
@@ -160,7 +187,8 @@ def test_cli_defaults_match_the_config_defaults(monkeypatch):
     assert cfg.snapshot_path == "snap.000100"
     for field in ("mag_limit", "mag_limit_band", "gaia_release", "extinction_mode", "mwdust_map",
                   "imf", "sampling", "output_coords", "output_format", "output_path", "fsample",
-                  "observer_position", "selection_function", "sf_mag_shift", "apply_errors",
+                  "observer_position", "rotation", "observer_velocity",
+                  "selection_function", "sf_mag_shift", "apply_errors",
                   "apply_tform_correction", "make_plots", "plot_dir", "random_seed", "param_file"):
         assert getattr(cfg, field) == getattr(ref, field), field
 
@@ -173,7 +201,7 @@ def test_cli_options_reach_the_config(monkeypatch):
         "--dust-map", "Green19", "--imf", "salpeter", "--sampling", "poisson",
         "--coords", "galactic", "cartesian", "--no-errors", "--no-tform-correction",
         "--plots", "--plot-dir", "figs", "--seed", "11", "--fsample", "0.25",
-        "--obs-x", "-8.0", "--obs-y", "1.0", "--obs-z", "0.0"])
+        "--obs-x", "-8.0", "--obs-y", "1.0", "--obs-z", "0.0", "--rotation", "counterclockwise"])
     assert cfg.output_path == "out/c.fits" and cfg.output_format == "fits"
     assert cfg.gaia_release == "dr4" and cfg.param_file == "p.param"
     assert cfg.mag_limit == 14.5 and cfg.mag_limit_band == "G"
@@ -185,6 +213,7 @@ def test_cli_options_reach_the_config(monkeypatch):
     assert cfg.make_plots is True and cfg.plot_dir == "figs"
     assert cfg.random_seed == 11 and cfg.fsample == 0.25
     assert cfg.observer_position == (-8.0, 1.0, 0.0)
+    assert cfg.rotation == "counterclockwise"
 
 
 def test_cli_rejects_unknown_choices(monkeypatch):

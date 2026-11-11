@@ -16,14 +16,15 @@ isochrones rather than on stubs.
 | `test_imf.py` | Kroupa / Salpeter CDF, inverse, mean mass and expected counts against numerical integrals; samples against the CDF (KS) |
 | `test_photometry.py` | Sartoretti+23 G_RVS: hand-computed values, colour range, agreement with PyGaia |
 | `test_config.py` | defaults, observer velocity from the solar motion, validation, run summary |
-| `test_coordinates.py` | Cartesian → Galactic → ICRS against astropy, units of proper motion, round trip back to Cartesian, the rotation-sense convention |
+| `test_frame.py` | rotation sense detected from the stars, Galactic axes and observer velocity for either sense and any observer azimuth, Sgr A*'s proper motion, agreement with astropy's Galactocentric frame, the printed report, and that the mock sky is identical star for star however the simulation is oriented |
+| `test_coordinates.py` | Cartesian → Galactic → ICRS against astropy, units of proper motion, round trip back to simulation coordinates in any frame |
 | `test_extinction.py` | band coefficients, gas ray-march against the analytic column of a uniform medium, scalings |
 | `test_isochrones.py` | cache loading, nearest-cell lookup, interpolation, limiting mass, CMD parsing and the download path with the HTTP calls replaced |
 | `test_smoothing.py` | kNN lengths against a known density, Epanechnikov draws against the kernel |
 | `test_population.py` | mass-budget sampling is unbiased, magnitude limits in G and G_RVS, truncation loses no stars, extinction, binaries, smoothing, reproducibility |
 | `test_errors.py` | PyGaia units (mas, mag, km/s), the arguments of the RV call, pull distributions, magnitude range, fallback model |
 | `test_catalogue.py` | columns per coordinate system, re-applied cuts, selection function, HDF5 / FITS round trips, the reader |
-| `test_simulation.py` | array container, metallicity units, tform remap, .param link |
+| `test_simulation.py` | array container, metallicity units, tform remap, .param link, levelling a tilted disc without turning it over |
 | `test_pipeline.py` | end-to-end runs, plots, snapshot loading options, command line ↔ Config |
 | `test_regression.py` | golden baseline: every output column of two fixed-seed runs |
 
@@ -40,7 +41,7 @@ isochrones rather than on stubs.
    stored in `data/golden.json`), so a major upgrade of either can need the same step.
 3. Add tests for the new behaviour next to the module's existing ones.  The fixtures to reach for:
    `make_config(**overrides)` (no extinction, seed 42, G_RVS < 12, output under a temp directory),
-   `iso_grid`, `mock_snapshot` / `mock_snapshot_gas`, `make_pipeline_config` (as `make_config`,
+   `iso_grid`, `mock_snapshot` / `mock_snapshot_gas` (clockwise; `build_mock_snapshot(rotation="counterclockwise")` for the other sense), `make_pipeline_config` (as `make_config`,
    with the isochrone cache pre-seeded so `Pipeline.run` needs no network), `ConstantExtinction`.
 4. A known bug that is not being fixed yet goes in as a test of the correct behaviour marked
    `@pytest.mark.xfail(strict=True, reason=...)`: the suite stays green, and turns red the day

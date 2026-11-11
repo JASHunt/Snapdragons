@@ -19,29 +19,28 @@ def test_defaults():
     assert c.phase_space_smoothing is False
     assert c.selection_function == "none"
     assert c.output_coords == ["equatorial"]
+    assert c.rotation == "auto"
 
 
-def test_default_observer_velocity():
-    # Sun at (-8.2, 0): e_R = (-1, 0, 0), e_phi = (0, -1, 0) for
-    # counter-clockwise rotation, so v = (+U, -(V_c + V), +W)
-    c = Config()
-    assert c.observer_velocity == pytest.approx((11.1, -(232.8 + 12.24), 7.25))
+def test_observer_velocity_is_left_to_the_frame():
+    # it depends on which way the disc turns, which is only known once the
+    # snapshot is loaded: see test_frame.py
+    assert Config().observer_velocity is None
 
 
-def test_observer_velocity_follows_the_observer_azimuth():
-    # quarter turn: observer at (0, -8.2) -> e_R = (0, -1), e_phi = (1, 0)
-    c = Config(observer_position=(0.0, -8.2, 0.0))
-    assert c.observer_velocity == pytest.approx((232.8 + 12.24, 11.1, 7.25), abs=1e-9)
-    # the speed does not depend on azimuth
-    for phi in np.linspace(0, 2 * np.pi, 7):
-        c = Config(observer_position=(8.2 * np.cos(phi), 8.2 * np.sin(phi), 0.0))
-        assert np.linalg.norm(c.observer_velocity) == pytest.approx(
-            np.sqrt(11.1**2 + 245.04**2 + 7.25**2))
+def test_rotation_option():
+    assert Config().rotation == "auto"
+    assert Config(rotation="Clockwise").rotation == "clockwise"
+    assert Config(rotation="counterclockwise").rotation == "counterclockwise"
+    with pytest.raises(ValueError):
+        Config(rotation="anticlockwise")
 
 
-def test_solar_motion_and_vcirc_overrides():
-    c = Config(solar_U=10.0, solar_V=5.0, solar_W=7.0, v_circular=220.0)
-    assert c.observer_velocity == pytest.approx((10.0, -225.0, 7.0))
+def test_frame_shortcut(mock_snapshot):
+    frame = Config().frame(mock_snapshot)
+    assert frame.rotation == "clockwise"
+    assert frame.obs_vel == pytest.approx((11.1, 232.8 + 12.24, 7.25))
+    assert Config(rotation="counterclockwise").frame().north_sign == -1
 
 
 def test_explicit_observer_velocity_is_kept():
@@ -94,11 +93,16 @@ def test_print_summary_reports_the_run_settings(capsys):
     assert "Neighbours" in out
     assert "simulation" in out
     assert "tform correction : OFF" in out
+    assert "Disc rotation    : auto" in out and "detected" in out
+    assert "reported with the Galactic frame" in out
 
 
 def test_print_summary_minimal(capsys):
-    Config(mag_limit_band="G", extinction_mode="mwdust").print_summary()
+    Config(mag_limit_band="G", extinction_mode="mwdust", rotation="clockwise",
+           observer_velocity=(10, 240, 7)).print_summary()
     out = capsys.readouterr().out
+    assert "Disc rotation    : clockwise" in out and "as set" in out
+    assert "(10.00, 240.00, 7.00) km/s  [as given]" in out
     assert "G < 16.0" in out
     assert "Combined19" in out
     assert "tform correction : ON" in out

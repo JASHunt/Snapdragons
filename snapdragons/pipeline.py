@@ -16,6 +16,7 @@ from .extinction import get_extinction_calculator
 from .errors import GaiaErrorModel
 from .catalogue import build_catalogue, write_catalogue
 from .diagnostics import make_diagnostic_plots
+from .frame import GalacticFrame
 
 
 class Pipeline:
@@ -57,6 +58,11 @@ class Pipeline:
                 apply_tform_correction=self.config.apply_tform_correction,
             )
 
+        # --- Galactic frame of the observer ---
+        print()
+        frame = GalacticFrame.from_config(self.config, snapshot)
+        frame.print_report()
+
         # --- Load isochrones ---
         print("\nStep 2/5: Loading isochrones")
         iso_grid = IsochroneGrid(self.config)
@@ -71,7 +77,7 @@ class Pipeline:
         print("\nStep 4/5: Population synthesis")
         raw_cat = synthesise_population(
             snapshot, iso_grid, self.config,
-            extinction_calc=ext_calc,
+            extinction_calc=ext_calc, frame=frame,
         )
 
         if raw_cat is None:
@@ -86,7 +92,7 @@ class Pipeline:
         catalogue = build_catalogue(
             raw_cat, self.config,
             error_model=error_model,
-            rng=rng,
+            rng=rng, frame=frame,
         )
 
         if catalogue is not None:
@@ -175,6 +181,10 @@ def main():
                         help="Observer y position [kpc]")
     parser.add_argument("--obs-z", type=float, default=0.02,
                         help="Observer z position [kpc]")
+    parser.add_argument("--rotation", default="auto",
+                        choices=["auto", "clockwise", "counterclockwise"],
+                        help="Sense of disc rotation seen from +z "
+                             "(default: detected from the stars)")
 
     args = parser.parse_args()
 
@@ -200,6 +210,7 @@ def main():
         random_seed=args.seed,
         fsample=args.fsample,
         observer_position=(args.obs_x, args.obs_y, args.obs_z),
+        rotation=args.rotation,
     )
 
     pipeline = Pipeline(config)

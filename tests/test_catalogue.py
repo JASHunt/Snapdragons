@@ -33,6 +33,36 @@ def build(raw, cfg, errors=True, seed=1):
     return build_catalogue(raw, cfg, error_model=model, rng=np.random.default_rng(seed))
 
 
+# --- frame ---------------------------------------------------------------------
+
+def test_catalogue_uses_the_frame_of_the_synthesis(raw_cat, make_config):
+    assert raw_cat.frame.rotation == "clockwise"
+    cat = build(raw_cat, make_config(), errors=False)
+    assert cat.frame is raw_cat.frame
+
+
+def test_plain_dict_input_needs_the_rotation_or_a_frame(raw_cat, make_config):
+    plain = dict(raw_cat)
+    with pytest.raises(ValueError, match="needs the snapshot"):
+        build_catalogue(plain, make_config())
+    ref = build(raw_cat, make_config(), errors=False)["true"]
+    by_setting = build_catalogue(plain, make_config(rotation="clockwise"))["true"]
+    by_frame = build_catalogue(plain, make_config(), frame=raw_cat.frame)["true"]
+    assert np.array_equal(by_setting["l"], ref["l"]) and np.array_equal(by_frame["l"], ref["l"])
+
+
+def test_an_explicit_frame_takes_precedence(raw_cat, make_config):
+    from snapdragons import GalacticFrame
+    other = GalacticFrame(rotation="counterclockwise")
+    cat = build_catalogue(raw_cat, make_config(), frame=other)
+    ref = build(raw_cat, make_config(), errors=False)["true"]
+    assert cat.frame is other
+    # the same stars seen with north toward -z: l and b change sign
+    assert np.allclose((cat["true"]["l"] + ref["l"]) % 360, 0, atol=1e-7) or \
+        np.allclose(np.cos(np.radians(cat["true"]["l"] + ref["l"])), 1.0)
+    assert np.allclose(cat["true"]["b"], -ref["b"], atol=1e-3)
+
+
 # --- structure -----------------------------------------------------------------
 
 def test_no_stars_in_no_catalogue_out(make_config):
@@ -126,7 +156,8 @@ def test_bright_cut_is_in_g(raw_cat, make_config):
 
 
 def test_stars_without_g_rvs_are_dropped_from_a_g_rvs_limited_catalogue(raw_cat, make_config):
-    raw = dict(raw_cat)
+    raw = type(raw_cat)(raw_cat)
+    raw.frame = raw_cat.frame
     raw["G_RVSmag_app"] = raw_cat["G_RVSmag_app"].copy()
     raw["G_RVSmag_app"][:25] = np.nan
     n_all = len(raw_cat["Mini"])
@@ -168,7 +199,7 @@ def test_observed_cartesian_is_the_inversion_of_the_observed_astrometry(raw_cat,
     cat = build(raw_cat, cfg)
     o = cat["observed"]
     back = observed_to_cartesian(o["ra"], o["dec"], o["parallax"], o["pmra"], o["pmdec"], o["rv"],
-                                 np.asarray(cfg.observer_position), np.asarray(cfg.observer_velocity))
+                                 frame=cat.frame)
     for k in ("x", "y", "z", "vx", "vy", "vz"):
         assert np.allclose(o[k], back[k], equal_nan=True)
     # positions exist wherever the parallax is positive; velocities also need an RV
@@ -353,14 +384,19 @@ def test_hdf5_round_trip(raw_cat, make_config):
 
 def test_hdf5_metadata(raw_cat, make_config):
     cfg = make_config(gaia_release="dr4", mag_limit=11.5, selection_function="none")
-    write_catalogue(build(raw_cat, cfg), cfg)
+    cat = build(raw_cat, cfg)
+    write_catalogue(cat, cfg)
     meta = read_catalogue(cfg.output_path).metadata
     assert meta["gaia_release"] == "dr4"
     assert meta["mag_limit"] == 11.5 and meta["mag_limit_band"] == "G_RVS"
     assert meta["imf"] == "kroupa" and meta["extinction_mode"] == "none"
     assert meta["selection_function"] == "none" and meta["sf_mag_shift"] == 2.5
     assert meta["observer_position"] == pytest.approx(list(cfg.observer_position))
-    assert meta["observer_velocity"] == pytest.approx(list(cfg.observer_velocity))
+    assert meta["observer_velocity"] == pytest.approx(list(cat.frame.obs_vel))
+    assert meta["observer_velocity"] == pytest.approx([11.1, 245.04, 7.25])
+    assert meta["rotation"] == "clockwise" and meta["rotation_source"] == "detected"
+    assert meta["galactic_north"] == "+z"
+    assert np.allclose(meta["frame_axes"], np.eye(3))
     assert list(meta["output_coords"]) == cfg.output_coords
     with h5py.File(cfg.output_path) as h:
         assert h["metadata"].attrs["n_stars"] == h["true/ra"].shape[0]

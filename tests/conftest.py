@@ -57,18 +57,22 @@ def rng():
     return np.random.default_rng(12345)
 
 
-def build_mock_snapshot(n=300, seed=7, mass=5e3, with_gas=False):
+def build_mock_snapshot(n=300, seed=7, mass=5e3, with_gas=False,
+                        rotation="clockwise"):
     """Disc patch within ~2 kpc of the default observer at (-8.2, 0, 0.02).
 
-    Counter-clockwise rotation at 232.8 km/s plus a velocity ellipsoid;
-    ages and [M/H] drawn from the cells of the PARSEC subset.
+    Rotation at 232.8 km/s, clockwise seen from +z by default (the Milky
+    Way's sense) or "counterclockwise", plus a velocity ellipsoid; ages
+    and [M/H] drawn from the cells of the PARSEC subset.  The positions
+    and the random part of the velocities do not depend on the sense.
     """
     rng = np.random.default_rng(seed)
     x = rng.uniform(-10.2, -6.2, n)
     y = rng.uniform(-2.0, 2.0, n)
     z = rng.normal(0.0, 0.2, n)
     phi = np.arctan2(y, x)
-    vel = (232.8 * np.column_stack([-np.sin(phi), np.cos(phi), np.zeros(n)])
+    sense = -1.0 if rotation == "clockwise" else 1.0
+    vel = (sense * 232.8 * np.column_stack([-np.sin(phi), np.cos(phi), np.zeros(n)])
            + rng.normal(0.0, [30.0, 20.0, 15.0], (n, 3)))
     age = rng.choice([0.1, 1.0, 5.0, 10.0], n)
     mh = rng.choice(list(SUBSET_MHS), n)

@@ -17,10 +17,18 @@ class Config:
     snapshot_path: Optional[str] = None
     param_file: Optional[str] = None  # ChaNGa .param file (auto-detected if None)
 
-    # --- Observer position [kpc, Galactocentric Cartesian] ---
-    # Convention: x toward Galactic anti-centre, y toward rotation, z toward NGP.
-    # Default places the Sun at (-8.2, 0, 0.02) kpc.
+    # --- Observer position [kpc], in the simulation's own coordinates ---
+    # The galactic centre is the origin and the disc lies in the xy plane.
+    # The observer is used exactly where it is put; the Galactic frame
+    # (l = 0 to the centre, north = the side from which the disc turns
+    # clockwise) is built around it: see snapdragons/frame.py.
     observer_position: tuple = (-8.2, 0.0, 0.02)
+
+    # Sense of rotation of the disc seen from the simulation's +z:
+    #   "auto"              -- detected from the star particles (default)
+    #   "clockwise"         -- the Milky Way's sense with z to the north
+    #   "counterclockwise"
+    rotation: str = "auto"
 
     # --- Solar peculiar motion [km/s] (Schoenrich et al. 2010) ---
     solar_U: float = 11.1    # toward Galactic centre
@@ -30,9 +38,10 @@ class Config:
     # Circular velocity at the Solar radius [km/s]
     v_circular: float = 232.8
 
-    # Full observer velocity [km/s] in the simulation frame.
-    # If None, computed from solar motion + circular velocity assuming
-    # the disk rotates counter-clockwise as seen from +z.
+    # Full observer velocity [km/s] in simulation coordinates.
+    # If None, it is v_circular along the disc's rotation plus the solar
+    # motion (U to the centre, V with the rotation, W to Galactic north),
+    # worked out once the sense of rotation is known (GalacticFrame).
     observer_velocity: Optional[tuple] = None
 
     # --- IMF ---
@@ -100,10 +109,13 @@ class Config:
     fsample: float = 1.0         # down-sampling fraction (0 < fsample <= 1)
 
     def __post_init__(self):
-        if self.observer_velocity is None:
-            self.observer_velocity = self._compute_observer_velocity()
         self.observer_position = tuple(float(x) for x in self.observer_position)
-        self.observer_velocity = tuple(float(x) for x in self.observer_velocity)
+        if self.observer_velocity is not None:
+            self.observer_velocity = tuple(float(x) for x in self.observer_velocity)
+        self.rotation = str(self.rotation).lower()
+        if self.rotation not in ("auto", "clockwise", "counterclockwise"):
+            raise ValueError(f"Unknown rotation '{self.rotation}'. Choose "
+                             "'auto', 'clockwise' or 'counterclockwise'")
         valid_coords = {"equatorial", "galactic", "cartesian"}
         for c in self.output_coords:
             if c not in valid_coords:
@@ -125,28 +137,11 @@ class Config:
         """Catalogue column that mag_limit applies to ('Gmag' or 'G_RVSmag')."""
         return "G_RVSmag" if self.mag_limit_band == "G_RVS" else "Gmag"
 
-    def _compute_observer_velocity(self):
-        """Derive full observer velocity from Solar motion + circular velocity.
-
-        At position (x, y, z), the cylindrical unit vectors are:
-          e_R   = (cos phi, sin phi, 0)  -- radially outward
-          e_phi = (-sin phi, cos phi, 0) -- direction of rotation (CCW from +z)
-
-        The velocity is:
-          v = -U_sun * e_R + (V_circ + V_sun) * e_phi + W_sun * e_z
-        """
-        x, y, _ = self.observer_position
-        phi = np.arctan2(y, x)
-        cphi, sphi = np.cos(phi), np.sin(phi)
-
-        e_R = np.array([cphi, sphi, 0.0])
-        e_phi = np.array([-sphi, cphi, 0.0])
-        e_z = np.array([0.0, 0.0, 1.0])
-
-        v = (-self.solar_U * e_R
-             + (self.v_circular + self.solar_V) * e_phi
-             + self.solar_W * e_z)
-        return tuple(v)
+    def frame(self, snapshot=None):
+        """The Galactic frame of this run's observer (see frame.py).  With
+        rotation="auto" the snapshot is needed to detect the rotation."""
+        from .frame import GalacticFrame
+        return GalacticFrame.from_config(self, snapshot)
 
     def print_summary(self):
         """Print a formatted summary of all run parameters."""
@@ -159,10 +154,16 @@ class Config:
             "  Observer",
             f"    Position (x,y,z) : ({self.observer_position[0]:.2f}, "
             f"{self.observer_position[1]:.2f}, "
-            f"{self.observer_position[2]:.3f}) kpc",
-            f"    Velocity (vx,vy,vz): ({self.observer_velocity[0]:.2f}, "
-            f"{self.observer_velocity[1]:.2f}, "
-            f"{self.observer_velocity[2]:.2f}) km/s",
+            f"{self.observer_position[2]:.3f}) kpc  [simulation coordinates]",
+            ("    Velocity (vx,vy,vz): "
+             f"({self.observer_velocity[0]:.2f}, {self.observer_velocity[1]:.2f}, "
+             f"{self.observer_velocity[2]:.2f}) km/s  [as given]"
+             if self.observer_velocity is not None else
+             "    Velocity         : V_circular along the disc rotation + solar "
+             "motion (reported with the Galactic frame)"),
+            f"    Disc rotation    : {self.rotation}"
+            + ("  (detected from the star particles)" if self.rotation == "auto"
+               else "  (seen from +z; as set)"),
             f"    Solar motion (U,V,W): ({self.solar_U}, {self.solar_V}, "
             f"{self.solar_W}) km/s  [Schoenrich+ 2010]",
             f"    V_circular       : {self.v_circular} km/s",

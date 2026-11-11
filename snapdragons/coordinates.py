@@ -17,8 +17,9 @@ def cartesian_to_galactic(dx, dy, dz, dvx=None, dvy=None, dvz=None):
     Parameters
     ----------
     dx, dy, dz : array
-        Relative position [kpc] (observer-centred, same orientation as
-        the Galactocentric frame).
+        Relative position [kpc], observer-centred along the Galactic axes
+        (x toward l = 0, y toward l = 90, z toward the north pole): see
+        GalacticFrame.to_galactic_cartesian.
     dvx, dvy, dvz : array, optional
         Relative velocity [km/s].
 
@@ -109,13 +110,12 @@ def galactic_to_equatorial(l_deg, b_deg, dist_kpc,
 
 
 def observed_to_cartesian(ra_deg, dec_deg, parallax_mas,
-                          pmra=None, pmdec=None, rv=None,
-                          obs_pos=(0, 0, 0), obs_vel=(0, 0, 0)):
+                          pmra=None, pmdec=None, rv=None, frame=None):
     """Convert observed equatorial coordinates back to Cartesian.
 
     Inverse of the forward chain: ICRS -> Galactic (l, b, d) ->
-    observer-centred Cartesian -> absolute Cartesian.
-    Stars with non-positive observed parallax get NaN positions.
+    observer-centred Cartesian along the Galactic axes -> simulation
+    coordinates.  Stars with non-positive observed parallax get NaN.
 
     Parameters
     ----------
@@ -123,15 +123,16 @@ def observed_to_cartesian(ra_deg, dec_deg, parallax_mas,
     parallax_mas : array [mas]
     pmra, pmdec : array [mas/yr], optional
     rv : array [km/s], optional
-    obs_pos : (3,) [kpc]
-    obs_vel : (3,) [km/s]
+    frame : GalacticFrame, optional
+        The observer's frame (position, velocity, Galactic axes).  Without
+        it the result is observer-centred along the Galactic axes (x to
+        l = 0, y to l = 90, z to the north pole) with velocities relative
+        to the observer.
 
     Returns
     -------
     dict with keys x, y, z [kpc], vx, vy, vz [km/s].
     """
-    obs_pos = np.asarray(obs_pos, dtype=float)
-    obs_vel = np.asarray(obs_vel, dtype=float)
     n = len(ra_deg)
 
     result = {k: np.full(n, np.nan) for k in
@@ -168,9 +169,8 @@ def observed_to_cartesian(ra_deg, dec_deg, parallax_mas,
     cosb, sinb = np.cos(b_rad), np.sin(b_rad)
     cosl, sinl = np.cos(l_rad), np.sin(l_rad)
 
-    result["x"][valid] = d * cosb * cosl + obs_pos[0]
-    result["y"][valid] = d * cosb * sinl + obs_pos[1]
-    result["z"][valid] = d * sinb + obs_pos[2]
+    rel = np.column_stack([d * cosb * cosl, d * cosb * sinl, d * sinb])
+    rel_v = None
 
     if has_vel:
         kpc_to_km = 3.085677581e16
@@ -185,42 +185,52 @@ def observed_to_cartesian(ra_deg, dec_deg, parallax_mas,
         vl = mul_cosb * d_km / (yr_to_s * mas_per_rad)
         vb = mub * d_km / (yr_to_s * mas_per_rad)
 
-        result["vx"][valid] = (vr_gal * cosb * cosl
-                               - vl * sinl
-                               - vb * sinb * cosl + obs_vel[0])
-        result["vy"][valid] = (vr_gal * cosb * sinl
-                               + vl * cosl
-                               - vb * sinb * sinl + obs_vel[1])
-        result["vz"][valid] = vr_gal * sinb + vb * cosb + obs_vel[2]
+        rel_v = np.column_stack([
+            vr_gal * cosb * cosl - vl * sinl - vb * sinb * cosl,
+            vr_gal * cosb * sinl + vl * cosl - vb * sinb * sinl,
+            vr_gal * sinb + vb * cosb,
+        ])
+
+    if frame is not None:
+        if rel_v is not None:
+            pos, vel = frame.to_simulation(rel, rel_v)
+        else:
+            pos, vel = frame.to_simulation(rel), None
+    else:
+        pos, vel = rel, rel_v
+
+    for i, k in enumerate(("x", "y", "z")):
+        result[k][valid] = pos[:, i]
+    if vel is not None:
+        for i, k in enumerate(("vx", "vy", "vz")):
+            result[k][valid] = vel[:, i]
 
     return result
 
 
-def compute_observables(star_pos, star_vel, obs_pos, obs_vel,
+def compute_observables(star_pos, star_vel, frame,
                         coord_systems=("equatorial",)):
     """Compute all requested coordinate systems for a set of stars.
 
     Parameters
     ----------
-    star_pos : (N, 3) array  [kpc]
-    star_vel : (N, 3) array  [km/s]
-    obs_pos : (3,) tuple/array  [kpc]
-    obs_vel : (3,) tuple/array  [km/s]
+    star_pos : (N, 3) array  [kpc], simulation coordinates
+    star_vel : (N, 3) array  [km/s], simulation coordinates
+    frame : GalacticFrame
+        The observer's position, velocity and Galactic axes.
     coord_systems : tuple of str
 
     Returns
     -------
-    dict of dicts, keyed by coordinate system name.
+    dict of dicts, keyed by coordinate system name.  Sky coordinates and
+    proper motions are in the Galactic frame of the observer; the
+    "cartesian" entry is the input, in simulation coordinates.
     """
-    obs_pos = np.asarray(obs_pos)
-    obs_vel = np.asarray(obs_vel)
-
-    dx = star_pos[:, 0] - obs_pos[0]
-    dy = star_pos[:, 1] - obs_pos[1]
-    dz = star_pos[:, 2] - obs_pos[2]
-    dvx = star_vel[:, 0] - obs_vel[0]
-    dvy = star_vel[:, 1] - obs_vel[1]
-    dvz = star_vel[:, 2] - obs_vel[2]
+    star_pos = np.asarray(star_pos)
+    star_vel = np.asarray(star_vel)
+    rel, rel_v = frame.to_galactic_cartesian(star_pos, star_vel)
+    dx, dy, dz = rel[:, 0], rel[:, 1], rel[:, 2]
+    dvx, dvy, dvz = rel_v[:, 0], rel_v[:, 1], rel_v[:, 2]
 
     result = {}
     gal = None
@@ -231,29 +241,20 @@ def compute_observables(star_pos, star_vel, obs_pos, obs_vel,
             result["galactic"] = gal
 
     if "equatorial" in coord_systems:
-        if gal is None:
-            gal = cartesian_to_galactic(dx, dy, dz, dvx, dvy, dvz)
         eq = galactic_to_equatorial(
             gal["l"], gal["b"], gal["dist"],
             gal["mul"], gal["mub"], gal["vr"],
         )
         result["equatorial"] = eq
 
+    dist = gal["dist"] if gal is not None else np.sqrt(dx**2 + dy**2 + dz**2)
+
     if "cartesian" in coord_systems:
-        dist = np.sqrt(dx**2 + dy**2 + dz**2)
         result["cartesian"] = {
             "x": star_pos[:, 0], "y": star_pos[:, 1], "z": star_pos[:, 2],
             "vx": star_vel[:, 0], "vy": star_vel[:, 1], "vz": star_vel[:, 2],
             "dist": dist,
         }
 
-    if gal is not None and "equatorial" not in coord_systems:
-        result["_dist"] = gal["dist"]
-    elif "equatorial" in coord_systems:
-        result["_dist"] = gal["dist"]
-    elif "cartesian" in coord_systems:
-        result["_dist"] = result["cartesian"]["dist"]
-    else:
-        result["_dist"] = np.sqrt(dx**2 + dy**2 + dz**2)
-
+    result["_dist"] = dist
     return result
